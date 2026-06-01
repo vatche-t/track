@@ -1,8 +1,22 @@
 const GROQ_API = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile";
 
+// System prompt shared across all finance/tracker calls.
+// Uses labelled sections (outperforms prose for Llama 3.x instruction-tuned models).
+// Opener-phrase suppression avoids "Sure!/Certainly!" noise artifacts from RLHF training.
+const SYSTEM = `ROLE: You are Kai, a personal finance and productivity assistant for someone in Yerevan, Armenia.
+
+HARD CONSTRAINTS:
+1. Never invent financial figures or balances
+2. Never give tax, legal, or investment advice
+3. Start every response with the first word of your answer — no opener phrases like "Sure", "Certainly", "Of course", "Great question"
+
+RESPONSE RULES:
+- Be direct and specific — reference actual numbers from the data
+- Keep responses under 180 words unless asked for detail
+- Use plain English, no jargon`;
+
 function getKey() {
-  // Prefer user-saved key from settings, fall back to .env
   return (
     localStorage.getItem("pt_groq_key") ||
     import.meta.env.VITE_GROQ_API_KEY ||
@@ -12,23 +26,48 @@ function getKey() {
 
 export const hasGroqKey = () => !!getKey();
 
-async function chat(messages, { maxTokens = 1024 } = {}) {
+async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
   const key = getKey();
-  if (!key) throw new Error("No Groq API key configured. Add it in Settings.");
+  if (!key) throw new Error("No Groq API key. Set VITE_GROQ_API_KEY in .env");
   const res = await fetch(GROQ_API, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify({ model: MODEL, messages, max_tokens: maxTokens }),
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "system", content: SYSTEM }, ...messages],
+      max_tokens: maxTokens,
+      temperature,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message || `Groq error ${res.status}`);
   }
   const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
+  // Strip any residual opener artifacts the model may still produce
+  const raw = data.choices?.[0]?.message?.content || "";
+  return raw.replace(/^(Sure[,!]?|Certainly[,!]?|Of course[,!]?|Great question[,!]?|I'd be happy to[^.]*\.\s*)/i, "").trim();
+}
+
+export async function getSpendingForecast({
+  spentSoFar, spendingCap, dayOfMonth, daysInMonth, daysRemaining,
+  safeToday, projectedTotal, onTrack, exchange,
+}) {
+  const pct = spendingCap > 0 ? Math.round((spentSoFar / spendingCap) * 100) : 0;
+  return chat([{
+    role: "user",
+    content: `DATA:
+- Spending cap: ${spendingCap.toLocaleString()} AMD/month
+- Spent so far: ${spentSoFar.toLocaleString()} AMD (${pct}% of cap, day ${dayOfMonth}/${daysInMonth})
+- Projected month-end: ${projectedTotal.toLocaleString()} AMD
+- Safe to spend: ${safeToday.toLocaleString()} AMD/day for ${daysRemaining} days left
+- Status: ${onTrack ? "ON TRACK" : "OVER PACE"}
+
+TASK: Write exactly 2 sentences. Sentence 1: state their status and projected total vs cap. Sentence 2: give the safe daily amount and one specific action.`,
+  }], { maxTokens: 100, temperature: 0.2 });
 }
 
 export async function getFinancialAdvice({ totals, savings, goals, exchange, categories }) {
@@ -77,46 +116,38 @@ Give 3-5 specific, actionable suggestions to improve this person's financial sit
 export async function askDataQuestion(question, { tasks, habits, goals, finance, totals, exchange }) {
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
-
-  const taskStats = {
+  const td = {
     total: tasks.length,
     done: tasks.filter((t) => t.status === "Done").length,
     inProgress: tasks.filter((t) => t.status === "In Progress").length,
     overdue: tasks.filter((t) => t.date < today && t.status !== "Done" && t.status !== "Cancelled").length,
   };
-
   const habitLines = habits.map((h) => {
-    const daysThisMonth = Object.entries(h.log || {}).filter(([d, v]) => d.startsWith(thisMonth) && v).length;
-    return `${h.name}: ${daysThisMonth} days logged this month`;
-  }).join(", ") || "No habits tracked";
+    const n = Object.entries(h.log || {}).filter(([d, v]) => d.startsWith(thisMonth) && v).length;
+    return `${h.name}: ${n}d this month`;
+  }).join(" | ") || "none";
+  const funds = (finance.savings || []).map((f) =>
+    `${f.name}: ${(+f.saved||0).toLocaleString()}/${(+f.target||0).toLocaleString()} AMD`
+  ).join(" | ") || "none";
 
-  const goalLines = goals.map((g) => `${g.title} (${g.progress}%, ${g.status})`).join(", ") || "No goals set";
+  return chat([{
+    role: "user",
+    content: `TRACKER DATA (1 USD = ${Math.round(exchange?.rate||390)} AMD):
+Finance — Income: ${totals.income.toLocaleString()} AMD | Expenses: ${totals.expenses.toLocaleString()} AMD | After plan: ${totals.leftAfterPlan.toLocaleString()} AMD | Savings goal/mo: ${totals.monthlyGoal.toLocaleString()} AMD
+Funds — ${funds}
+Tasks — Total: ${td.total} | Done: ${td.done} | In progress: ${td.inProgress} | Overdue: ${td.overdue}
+Habits — ${habitLines}
+Goals — ${goals.map((g) => `${g.title}: ${g.progress}% (${g.status})`).join(" | ") || "none"}
 
-  const savingsFunds = (finance.savings || []).map((f) =>
-    `${f.name}: ${(+f.saved || 0).toLocaleString()}/${(+f.target || 0).toLocaleString()} AMD saved`
-  ).join(" | ") || "None";
+QUESTION: ${question}
 
-  const prompt = `You are a personal AI assistant for a productivity and finance tracker. The user lives in Yerevan, Armenia. 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
+STEPS:
+1. Identify which data is relevant to the question
+2. Calculate or compare as needed
+3. Give a direct answer with specific numbers
 
-=== FINANCE (this month) ===
-Income: ${totals.income.toLocaleString()} AMD | Expenses: ${totals.expenses.toLocaleString()} AMD | After plan: ${totals.leftAfterPlan.toLocaleString()} AMD
-Monthly savings goal: ${totals.monthlyGoal.toLocaleString()} AMD | Logged expenses: ${totals.loggedExpenses.toLocaleString()} AMD
-Savings funds: ${savingsFunds}
-
-=== TASKS ===
-Total: ${taskStats.total} | Done: ${taskStats.done} | In Progress: ${taskStats.inProgress} | Overdue: ${taskStats.overdue}
-
-=== HABITS (this month) ===
-${habitLines}
-
-=== LIFE GOALS ===
-${goalLines}
-
-USER QUESTION: ${question}
-
-Answer directly and specifically using the data above. Be concise (3-5 sentences max). Use AMD amounts where relevant.`;
-
-  return chat([{ role: "user", content: prompt }], { maxTokens: 400 });
+Answer in 3 sentences max.`,
+  }], { maxTokens: 250, temperature: 0.3 });
 }
 
 export async function getGoalAdvice({ goal, totals, exchange }) {

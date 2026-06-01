@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   BrainCircuit,
+  CalendarDays,
   Landmark,
   Plus,
   ReceiptText,
@@ -11,7 +12,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
-import { getFinancialAdvice, hasGroqKey } from "../core/groq";
+import { getFinancialAdvice, getSpendingForecast } from "../core/groq";
 import { C } from "../core/constants";
 import { localDate, submitOnEnter, sum, uid } from "../core/date";
 import {
@@ -276,6 +277,13 @@ export function FinanceTab({ finance, setFinance }) {
         />
       </div>
 
+      <SpendingForecastCard
+        spentSoFar={totals.variableManual + totals.loggedExpenses}
+        spendingCap={spendingCap}
+        exchange={exchange}
+        displayCurrency={displayCurrency}
+      />
+
       <div className="money-layout">
         <Card className="expense-capture">
           <div className="card-head">
@@ -489,6 +497,94 @@ function ExpenseList({ expenses, deleteExpense, displayCurrency, exchange }) {
         </button>
       )}
     </div>
+  );
+}
+
+function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurrency }) {
+  const today = new Date();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const dayOfMonth = today.getDate();
+  const daysRemaining = Math.max(1, daysInMonth - dayOfMonth);
+  const dailyBurn = dayOfMonth > 0 ? spentSoFar / dayOfMonth : 0;
+  const projectedTotal = Math.round(dailyBurn * daysInMonth);
+  const safeToday = Math.max(0, Math.round((spendingCap - spentSoFar) / daysRemaining));
+  const onTrack = projectedTotal <= spendingCap;
+  const pct = spendingCap > 0 ? Math.min(100, Math.round((spentSoFar / spendingCap) * 100)) : 0;
+  const projPct = spendingCap > 0 ? Math.min(100, Math.round((projectedTotal / spendingCap) * 100)) : 0;
+
+  const [forecast, setForecast] = useState("");
+  const [busy, setBusy]         = useState(false);
+
+  const ask = async () => {
+    setBusy(true);
+    setForecast("");
+    try {
+      const text = await getSpendingForecast({
+        spentSoFar, spendingCap, dayOfMonth, daysInMonth, daysRemaining,
+        safeToday, projectedTotal, onTrack, exchange,
+      });
+      setForecast(text.replace(/^<\|.*?\|>\s*/g, "").trim());
+    } catch (e) {
+      setForecast("Could not load forecast — check your Groq key.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <div className="card-head">
+        <div>
+          <h3><CalendarDays size={18} /> Spending Forecast</h3>
+          <span>Day {dayOfMonth} of {daysInMonth} · {daysRemaining} days remaining this month</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Pill color={onTrack ? C.green : C.red}>{onTrack ? "On track" : "Over pace"}</Pill>
+          <Button onClick={ask} disabled={busy}>
+            {busy ? "…" : <><BrainCircuit size={14} /> AI Summary</>}
+          </Button>
+        </div>
+      </div>
+
+      <div className="forecast-grid">
+        <div className="forecast-stat">
+          <span>Spent so far</span>
+          <strong style={{ color: C.text }}>{displayMoney(spentSoFar, displayCurrency, exchange)}</strong>
+          <small>{pct}% of cap</small>
+        </div>
+        <div className="forecast-stat">
+          <span>Projected total</span>
+          <strong style={{ color: onTrack ? C.green : C.red }}>{displayMoney(projectedTotal, displayCurrency, exchange)}</strong>
+          <small>{projPct}% of cap</small>
+        </div>
+        <div className="forecast-stat">
+          <span>Safe to spend / day</span>
+          <strong style={{ color: C.blue }}>{displayMoney(safeToday, displayCurrency, exchange)}</strong>
+          <small>for {daysRemaining} days</small>
+        </div>
+        <div className="forecast-stat">
+          <span>Monthly cap</span>
+          <strong style={{ color: C.muted }}>{displayMoney(spendingCap, displayCurrency, exchange)}</strong>
+          <small>variable only</small>
+        </div>
+      </div>
+
+      <div className="forecast-bar">
+        <div className="forecast-bar-spent"   style={{ width: `${pct}%`,          background: C.green }} />
+        <div className="forecast-bar-proj"    style={{ width: `${Math.max(0, projPct - pct)}%`, background: onTrack ? C.blue + "88" : C.red + "88" }} />
+      </div>
+      <div className="forecast-bar-labels">
+        <span>0</span>
+        <span style={{ color: C.muted, fontSize: 10 }}>Spent {pct}% · Projected {projPct}%</span>
+        <span>Cap</span>
+      </div>
+
+      {forecast && (
+        <div className="forecast-ai">
+          <p>{forecast}</p>
+        </div>
+      )}
+    </Card>
   );
 }
 
