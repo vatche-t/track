@@ -74,6 +74,51 @@ Give 3-5 specific, actionable suggestions to improve this person's financial sit
   return chat([{ role: "user", content: prompt }], { maxTokens: 600 });
 }
 
+export async function askDataQuestion(question, { tasks, habits, goals, finance, totals, exchange }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const thisMonth = today.slice(0, 7);
+
+  const taskStats = {
+    total: tasks.length,
+    done: tasks.filter((t) => t.status === "Done").length,
+    inProgress: tasks.filter((t) => t.status === "In Progress").length,
+    overdue: tasks.filter((t) => t.date < today && t.status !== "Done" && t.status !== "Cancelled").length,
+  };
+
+  const habitLines = habits.map((h) => {
+    const daysThisMonth = Object.entries(h.log || {}).filter(([d, v]) => d.startsWith(thisMonth) && v).length;
+    return `${h.name}: ${daysThisMonth} days logged this month`;
+  }).join(", ") || "No habits tracked";
+
+  const goalLines = goals.map((g) => `${g.title} (${g.progress}%, ${g.status})`).join(", ") || "No goals set";
+
+  const savingsFunds = (finance.savings || []).map((f) =>
+    `${f.name}: ${(+f.saved || 0).toLocaleString()}/${(+f.target || 0).toLocaleString()} AMD saved`
+  ).join(" | ") || "None";
+
+  const prompt = `You are a personal AI assistant for a productivity and finance tracker. The user lives in Yerevan, Armenia. 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
+
+=== FINANCE (this month) ===
+Income: ${totals.income.toLocaleString()} AMD | Expenses: ${totals.expenses.toLocaleString()} AMD | After plan: ${totals.leftAfterPlan.toLocaleString()} AMD
+Monthly savings goal: ${totals.monthlyGoal.toLocaleString()} AMD | Logged expenses: ${totals.loggedExpenses.toLocaleString()} AMD
+Savings funds: ${savingsFunds}
+
+=== TASKS ===
+Total: ${taskStats.total} | Done: ${taskStats.done} | In Progress: ${taskStats.inProgress} | Overdue: ${taskStats.overdue}
+
+=== HABITS (this month) ===
+${habitLines}
+
+=== LIFE GOALS ===
+${goalLines}
+
+USER QUESTION: ${question}
+
+Answer directly and specifically using the data above. Be concise (3-5 sentences max). Use AMD amounts where relevant.`;
+
+  return chat([{ role: "user", content: prompt }], { maxTokens: 400 });
+}
+
 export async function getGoalAdvice({ goal, totals, exchange }) {
   const prompt = `Personal finance advisor for Yerevan, Armenia. 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
 
