@@ -7,6 +7,7 @@ import {
   Plus,
   ReceiptText,
   RefreshCw,
+  RotateCcw,
   Target,
   Trash2,
   Wallet,
@@ -235,6 +236,17 @@ export function FinanceTab({ finance, setFinance }) {
             </div>
             <Button onClick={refreshRate} disabled={rateBusy} title="Refresh USD to AMD rate">
               <RefreshCw size={15} /> {rateBusy ? "Updating" : "Rate"}
+            </Button>
+            <Button
+              variant="outline"
+              title="Clear all finance data and start fresh"
+              onClick={() => {
+                if (window.confirm("Clear ALL finance data? This cannot be undone.")) {
+                  setFinance({ income: [], fixed: [], variable: [], savings: [], expenses: [], categories: [] });
+                }
+              }}
+            >
+              <RotateCcw size={15} /> Reset
             </Button>
           </div>
         }
