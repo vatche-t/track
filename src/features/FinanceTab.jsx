@@ -13,7 +13,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
-import { getFinancialAdvice, getSpendingForecast } from "../core/groq";
+import { GROQ_MODEL, getFinancialAdvice, getSpendingForecast } from "../core/groq";
 import { C } from "../core/constants";
 import { localDate, submitOnEnter, sum, uid } from "../core/date";
 import {
@@ -279,7 +279,6 @@ export function FinanceTab({ finance, setFinance }) {
       </Card>
 
       <div className="stats-grid" style={{ marginBottom: 20 }}>
-        <Stat label="Income" value={displayMoney(totals.income, displayCurrency, exchange)} color={C.green} />
         <Stat label="Expenses" value={displayMoney(totals.expenses, displayCurrency, exchange)} color={C.red} />
         <Stat label="Monthly Goal" value={displayMoney(totals.monthlyGoal, displayCurrency, exchange)} color={C.blue} />
         <Stat
@@ -614,7 +613,7 @@ function AiAdviceCard({ totals, model }) {
         savings: model.savings,
         goals: [],
         exchange: model.exchange,
-        categories: model.categories,
+        expenses: model.expenses,
       });
       setAdvice(text);
     } catch (e) {
@@ -628,7 +627,7 @@ function AiAdviceCard({ totals, model }) {
       <div className="card-head">
         <div>
           <h3><BrainCircuit size={18} /> AI Financial Advice</h3>
-          <span>Powered by Groq · llama-3.3-70b · based on your current month data</span>
+          <span>Powered by Groq · {GROQ_MODEL} · based on your current month data</span>
         </div>
         <Button variant="primary" onClick={ask} disabled={busy}>
           {busy ? "Thinking…" : "Get Advice"}

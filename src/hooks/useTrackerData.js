@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DEFAULTS } from "../core/defaults";
 import { localDate } from "../core/date";
+import { ensureStarterExpenses } from "../core/finance";
 import { store } from "../core/storage";
 
 const usePersistWhenLoaded = (loaded, key, value) => {
@@ -63,7 +64,7 @@ export function useTrackerData() {
       setRoutines(nextRoutines);
       setGoals(savedGoals);
       setHabits(savedHabits);
-      setFinance(savedFinance);
+      setFinance(ensureStarterExpenses(savedFinance));
       setReviews(savedReviews);
       setLoaded(true);
     })();

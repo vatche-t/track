@@ -1,5 +1,5 @@
 const GROQ_API = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.3-70b-versatile";
+export const GROQ_MODEL = "openai/gpt-oss-120b";
 
 // System prompt shared across all finance/tracker calls.
 // Uses labelled sections (outperforms prose for Llama 3.x instruction-tuned models).
@@ -29,18 +29,23 @@ export const hasGroqKey = () => !!getKey();
 async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
   const key = getKey();
   if (!key) throw new Error("No Groq API key. Set VITE_GROQ_API_KEY in .env");
+  const payload = {
+    model: GROQ_MODEL,
+    messages: [{ role: "system", content: SYSTEM }, ...messages],
+    max_tokens: maxTokens,
+    temperature,
+  };
+  if (GROQ_MODEL.startsWith("openai/gpt-oss")) {
+    payload.reasoning_effort = "low";
+  }
+
   const res = await fetch(GROQ_API, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "system", content: SYSTEM }, ...messages],
-      max_tokens: maxTokens,
-      temperature,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -49,6 +54,9 @@ async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
   const data = await res.json();
   // Strip any residual opener artifacts the model may still produce
   const raw = data.choices?.[0]?.message?.content || "";
+  if (!raw.trim()) {
+    throw new Error("AI returned no final answer. Try again.");
+  }
   return raw.replace(/^(Sure[,!]?|Certainly[,!]?|Of course[,!]?|Great question[,!]?|I'd be happy to[^.]*\.\s*)/i, "").trim();
 }
 
@@ -70,10 +78,10 @@ TASK: Write exactly 2 sentences. Sentence 1: state their status and projected to
   }], { maxTokens: 100, temperature: 0.2 });
 }
 
-export async function getFinancialAdvice({ totals, savings, goals, exchange, categories }) {
+export async function getFinancialAdvice({ totals, savings, goals, exchange, expenses }) {
   const income = totals.income;
-  const expenses = totals.expenses;
-  const net = income - expenses;
+  const totalExpenses = totals.expenses;
+  const net = income - totalExpenses;
   const savingsRate = income > 0 ? Math.round((totals.monthlyGoal / income) * 100) : 0;
 
   const fundLines = savings
@@ -84,17 +92,24 @@ export async function getFinancialAdvice({ totals, savings, goals, exchange, cat
     .map((g) => `  - ${g.title} (${g.status}, ${g.progress}% done)`)
     .join("\n");
 
-  const topCategories = [...(categories || [])]
-    .sort((a, b) => (b.spent || 0) - (a.spent || 0))
+  const categorySpend = (expenses || []).reduce((map, expense) => {
+    const name = expense.categoryName || "Other";
+    map.set(name, (map.get(name) || 0) + (+expense.amountAMD || 0));
+    return map;
+  }, new Map());
+
+  const topCategories = [...categorySpend.entries()]
+    .map(([name, spent]) => ({ name, spent }))
+    .sort((a, b) => b.spent - a.spent)
     .slice(0, 5)
-    .map((c) => `  - ${c.name}: ${Math.round(c.spent || 0).toLocaleString()} AMD`)
+    .map((c) => `  - ${c.name}: ${Math.round(c.spent).toLocaleString()} AMD`)
     .join("\n");
 
   const prompt = `You are a personal finance advisor for someone living in Yerevan, Armenia. All amounts are in AMD (Armenian Dram). Current rate: 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
 
 Current month snapshot:
 - Income: ${income.toLocaleString()} AMD
-- Total expenses: ${expenses.toLocaleString()} AMD
+- Total expenses: ${totalExpenses.toLocaleString()} AMD
 - Net after expenses: ${net.toLocaleString()} AMD
 - Monthly savings goal: ${totals.monthlyGoal.toLocaleString()} AMD (${savingsRate}% savings rate)
 - Remaining after plan: ${totals.leftAfterPlan.toLocaleString()} AMD
@@ -108,9 +123,17 @@ ${goalLines || "  None set"}
 Top spending categories this month:
 ${topCategories || "  No logged expenses yet"}
 
-Give 3-5 specific, actionable suggestions to improve this person's financial situation. Be concise and direct. Focus on the biggest lever available. Format as a numbered list. Each point max 2 sentences.`;
+QUALITY RULES:
+- Rank advice by AMD impact; do not over-optimize tiny expenses
+- If income is 0 AMD, treat it as missing income data unless the user explicitly says they have no income
+- Do not suggest spreadsheets, notebooks, or generic tracking; this app already tracks expenses
+- Do not shame basic food or grocery spending under 25,000 AMD/month
+- Use the listed category names and amounts when making recommendations
+- If data is incomplete, say what number to add next before giving conclusions
 
-  return chat([{ role: "user", content: prompt }], { maxTokens: 600 });
+TASK: Give exactly 3 recommendations. Format each as "1. Action — reason." Keep each recommendation under 35 words.`;
+
+  return chat([{ role: "user", content: prompt }], { maxTokens: 900, temperature: 0.15 });
 }
 
 export async function askDataQuestion(question, { tasks, habits, goals, finance, totals, exchange }) {

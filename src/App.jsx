@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BarChart3,
   CheckSquare,
   ClipboardList,
   Download,
@@ -14,7 +13,6 @@ import {
 } from "lucide-react";
 import { Button } from "./components/ui";
 import { activeTask, isMonday, lastWeekISO, localDate } from "./core/date";
-import { AnalyticsTab } from "./features/AnalyticsTab";
 import { ExportModal } from "./features/ExportModal";
 import { FinanceTab } from "./features/FinanceTab";
 import { FocusBar } from "./features/FocusBar";
@@ -29,18 +27,17 @@ import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTrackerData } from "./hooks/useTrackerData";
 import { AppStyles } from "./styles/AppStyles";
 
-const TABS = [
+const TRACK_TABS = [
   ["today", "Today", Home],
   ["tasks", "Tasks", CheckSquare],
   ["routines", "Routines", Sunrise],
   ["goals", "Goals", Target],
   ["habits", "Habits", Flame],
-  ["finance", "Finance", Wallet],
   ["review", "Weekly Review", ClipboardList],
-  ["analytics", "Analytics", BarChart3],
 ];
 
 export default function App() {
+  const [activeApp, setActiveApp] = useState("track");
   const [tab, setTab] = useState("today");
   const [showExport, setShowExport] = useState(false);
   const {
@@ -97,7 +94,10 @@ export default function App() {
     [tasks, reviewDue],
   );
 
-  useKeyboardShortcuts(TABS, setTab);
+  useKeyboardShortcuts(TRACK_TABS, (nextTab) => {
+    setActiveApp("track");
+    setTab(nextTab);
+  });
 
   if (!loaded) return <div className="loading">Loading tracker data...</div>;
 
@@ -115,6 +115,22 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
+          <div className="app-switch" aria-label="Choose app">
+            <button
+              type="button"
+              className={activeApp === "track" ? "active" : ""}
+              onClick={() => setActiveApp("track")}
+            >
+              <Home size={16} /> Track
+            </button>
+            <button
+              type="button"
+              className={activeApp === "finance" ? "active" : ""}
+              onClick={() => setActiveApp("finance")}
+            >
+              <Wallet size={16} /> Finance
+            </button>
+          </div>
           <div className="planning-badge">
             <strong>{dailyStats.percent}%</strong>
             <span>
@@ -127,75 +143,73 @@ export default function App() {
           </Button>
         </div>
       </header>
-      <nav className="tabs">
-        {TABS.map(([id, label, Icon]) => (
-          <button
-            key={id}
-            className={`${tab === id ? "active" : ""} ${id === "review" && reviewDue ? "needs-review" : ""}`}
-            onClick={() => setTab(id)}
-          >
-            <Icon size={17} /> {label}
-            {badges[id] ? (
-              <span className="tab-count">{badges[id]}</span>
-            ) : null}
-          </button>
-        ))}
-      </nav>
+      {activeApp === "track" && (
+        <nav className="tabs">
+          {TRACK_TABS.map(([id, label, Icon]) => (
+            <button
+              key={id}
+              className={`${tab === id ? "active" : ""} ${id === "review" && reviewDue ? "needs-review" : ""}`}
+              onClick={() => setTab(id)}
+            >
+              <Icon size={17} /> {label}
+              {badges[id] ? (
+                <span className="tab-count">{badges[id]}</span>
+              ) : null}
+            </button>
+          ))}
+        </nav>
+      )}
       <main>
         <AnimatePresence mode="wait">
           <motion.div
-            key={tab}
+            key={`${activeApp}-${tab}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
           >
-            {tab === "today" && (
-              <TodayTab
-                tasks={tasks}
-                setTasks={setTasks}
-                habits={habits}
-                setHabits={setHabits}
-                setTab={setTab}
-                startFocus={startFocus}
-              />
-            )}
-            {tab === "tasks" && (
-              <TasksTab
-                tasks={tasks}
-                setTasks={setTasks}
-                recurringTemplates={recurringTemplates}
-                setRecurringTemplates={setRecurringTemplates}
-                startFocus={startFocus}
-              />
-            )}
-            {tab === "routines" && (
-              <RoutinesTab routines={routines} setRoutines={setRoutines} />
-            )}
-            {tab === "goals" && <GoalsTab goals={goals} setGoals={setGoals} />}
-            {tab === "habits" && (
-              <HabitsTab habits={habits} setHabits={setHabits} />
-            )}
-            {tab === "finance" && (
+            {activeApp === "finance" && (
               <FinanceTab finance={finance} setFinance={setFinance} />
             )}
-            {tab === "review" && (
-              <WeeklyReviewTab
-                reviews={reviews}
-                setReviews={setReviews}
-                tasks={tasks}
-                habits={habits}
-                goals={goals}
-                finance={finance}
-              />
-            )}
-            {tab === "analytics" && (
-              <AnalyticsTab
-                tasks={tasks}
-                habits={habits}
-                goals={goals}
-                finance={finance}
-              />
+            {activeApp === "track" && (
+              <>
+                {tab === "today" && (
+                  <TodayTab
+                    tasks={tasks}
+                    setTasks={setTasks}
+                    habits={habits}
+                    setHabits={setHabits}
+                    setTab={setTab}
+                    startFocus={startFocus}
+                  />
+                )}
+                {tab === "tasks" && (
+                  <TasksTab
+                    tasks={tasks}
+                    setTasks={setTasks}
+                    recurringTemplates={recurringTemplates}
+                    setRecurringTemplates={setRecurringTemplates}
+                    startFocus={startFocus}
+                  />
+                )}
+                {tab === "routines" && (
+                  <RoutinesTab routines={routines} setRoutines={setRoutines} />
+                )}
+                {tab === "goals" && <GoalsTab goals={goals} setGoals={setGoals} />}
+                {tab === "habits" && (
+                  <HabitsTab habits={habits} setHabits={setHabits} />
+                )}
+                {tab === "review" && (
+                  <WeeklyReviewTab
+                    reviews={reviews}
+                    setReviews={setReviews}
+                    tasks={tasks}
+                    habits={habits}
+                    goals={goals}
+                    finance={finance}
+                  />
+                )}
+              </>
             )}
           </motion.div>
         </AnimatePresence>
@@ -207,9 +221,11 @@ export default function App() {
           onClose={() => setShowExport(false)}
         />
       )}
-      <AnimatePresence>
-        <FocusBar timer={timer} setTimer={setTimer} tasks={tasks} />
-      </AnimatePresence>
+      {activeApp === "track" && (
+        <AnimatePresence>
+          <FocusBar timer={timer} setTimer={setTimer} tasks={tasks} />
+        </AnimatePresence>
+      )}
     </div>
   );
 }

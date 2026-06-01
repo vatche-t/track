@@ -33,6 +33,12 @@ export const FINANCE_CATEGORIES = [
     keywords: ["grocery", "market", "supermarket", "sas", "yerevan city", "carrefour", "food"],
   },
   {
+    id: "garbage_spending",
+    name: "Garbage Spending",
+    type: "variable",
+    keywords: ["garbage", "waste", "impulse", "phone accessory", "accessory"],
+  },
+  {
     id: "transport",
     name: "Transport",
     type: "variable",
@@ -77,6 +83,15 @@ export const FINANCE_CATEGORIES = [
   { id: "other", name: "Other", type: "variable", keywords: [] },
 ];
 
+const withDefaultCategories = (categories) => {
+  if (!categories?.length) return FINANCE_CATEGORIES;
+  const ids = new Set(categories.map((category) => category.id));
+  return [
+    ...categories,
+    ...FINANCE_CATEGORIES.filter((category) => !ids.has(category.id)),
+  ];
+};
+
 export const DEFAULT_SAVINGS_FUNDS = [
   {
     id: uid(),
@@ -103,6 +118,52 @@ export const DEFAULT_SAVINGS_FUNDS = [
     targetDate: "",
   },
 ];
+
+export const STARTER_EXPENSES = [
+  {
+    id: "starter-phone-accessory-garbage-spending",
+    date: localDate(),
+    note: "Phone accessory",
+    amount: 13000,
+    originalAmount: 13000,
+    currency: AMD,
+    amountAMD: 13000,
+    fxRate: DEFAULT_USD_AMD_RATE,
+    rateDate: "",
+    categoryId: "garbage_spending",
+    categoryName: "Garbage Spending",
+    source: "Manual entry",
+  },
+  {
+    id: "starter-food-groceries",
+    date: localDate(),
+    note: "Food",
+    amount: 1900,
+    originalAmount: 1900,
+    currency: AMD,
+    amountAMD: 1900,
+    fxRate: DEFAULT_USD_AMD_RATE,
+    rateDate: "",
+    categoryId: "groceries",
+    categoryName: "Groceries",
+    source: "Manual entry",
+  },
+];
+
+export const ensureStarterExpenses = (finance = {}) => {
+  if (finance.seededStarterExpenses) return finance;
+  const expenses = finance.expenses || [];
+  const ids = new Set(expenses.map((expense) => expense.id));
+  const missing = STARTER_EXPENSES.filter((expense) => !ids.has(expense.id));
+  const categories = withDefaultCategories(finance.categories);
+
+  return {
+    ...finance,
+    expenses: [...missing, ...expenses],
+    categories,
+    seededStarterExpenses: true,
+  };
+};
 
 export const formatMoney = (value, currency = AMD) => {
   const amount = Number(value) || 0;
@@ -205,7 +266,7 @@ export const normalizeFinance = (finance = {}) => {
     expenses: (finance.expenses || []).map((expense) =>
       normalizeExpense(expense, exchange),
     ),
-    categories: finance.categories || FINANCE_CATEGORIES,
+    categories: withDefaultCategories(finance.categories),
     exchange,
   };
 };

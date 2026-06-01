@@ -1,5 +1,9 @@
 import { localDate, uid } from "./date";
-import { DEFAULT_SAVINGS_FUNDS } from "./finance";
+import {
+  DEFAULT_SAVINGS_FUNDS,
+  FINANCE_CATEGORIES,
+  STARTER_EXPENSES,
+} from "./finance";
 
 export const DEFAULTS = {
   tasks: [
@@ -110,7 +114,9 @@ export const DEFAULTS = {
       { id: uid(), name: "Cigarettes", budget: 13500, actual: 0 },
     ],
     savings: DEFAULT_SAVINGS_FUNDS,
-    expenses: [],
+    expenses: STARTER_EXPENSES,
+    categories: FINANCE_CATEGORIES,
+    seededStarterExpenses: true,
   },
   reviews: [],
 };
