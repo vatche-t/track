@@ -200,8 +200,8 @@ export function AnalyticsTab({ tasks, habits, goals, finance }) {
             color={C.blue}
           />
           <Stat
-            label="USD Rate"
-            value={displayMoney(financeModel.exchange.rate, AMD, financeModel.exchange)}
+            label="1 USD ="
+            value={`${Math.round(financeModel.exchange.rate).toLocaleString()} AMD`}
             color={C.purple}
           />
         </div>

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   BrainCircuit,
-  Key,
   Landmark,
   Plus,
   ReceiptText,
@@ -396,7 +395,6 @@ export function FinanceTab({ finance, setFinance }) {
       />
 
       <AiAdviceCard totals={totals} model={model} />
-      <GroqKeyCard />
 
       <div className="finance-grid">
         <MoneySection
@@ -543,41 +541,6 @@ function AiAdviceCard({ totals, model }) {
   );
 }
 
-function GroqKeyCard() {
-  const [key, setKey] = useState(() => localStorage.getItem("pt_groq_key") || "");
-  const [saved, setSaved] = useState(false);
-  const save = () => {
-    if (key.trim()) localStorage.setItem("pt_groq_key", key.trim());
-    else localStorage.removeItem("pt_groq_key");
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-  return (
-    <Card>
-      <div className="card-head">
-        <div>
-          <h3><Key size={18} /> Groq API Key</h3>
-          <span>Stored only in your browser. Get a free key at console.groq.com</span>
-        </div>
-        {saved && <Pill color={C.green}>Saved</Pill>}
-      </div>
-      <div className="groq-key-form" onKeyDown={(e) => e.key === "Enter" && save()}>
-        <input
-          className="field"
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="gsk_…"
-          style={{ flex: 1 }}
-        />
-        <Button variant="primary" onClick={save}>Save Key</Button>
-      </div>
-      <p style={{ color: C.muted, fontSize: 12, marginTop: 8 }}>
-        Uses model: llama-3.3-70b-versatile (fast, free tier available)
-      </p>
-    </Card>
-  );
-}
 
 function WindfallCard({ savings, exchange, displayCurrency, onApply }) {
   const [amount, setAmount] = useState("");
@@ -636,6 +599,83 @@ function WindfallCard({ savings, exchange, displayCurrency, onApply }) {
   );
 }
 
+function GoalFundRow({ row, fund, displayCurrency, exchange, setItem, setMoneyItem, delItem }) {
+  return (
+    <div className="goal-fund-item">
+      <div className="goal-fund-head">
+        <div className="goal-fund-title">
+          <Input
+            value={row.name}
+            onChange={(name) => setItem("savings", row.id, { name })}
+            placeholder="Goal name"
+            style={{ fontWeight: 600 }}
+          />
+          <span className="goal-fund-meta">
+            {displayMoney(row.saved || 0, displayCurrency, exchange)} of {displayMoney(row.target || 0, displayCurrency, exchange)}
+            {" · "}{fund.progress}%
+            {fund.months > 0 ? ` · ${fund.months}mo to go` : ""}
+          </span>
+        </div>
+        <button className="icon-btn danger" onClick={() => delItem("savings", row.id)}>
+          <Trash2 size={14} />
+        </button>
+      </div>
+      <div className="goal-fund-bar">
+        <div className="goal-fund-fill" style={{ width: `${fund.progress}%` }} />
+      </div>
+      <div className="goal-fund-fields">
+        <div className="goal-fund-field">
+          <label>Target</label>
+          <Input
+            value={inputValue(row.target ?? 0, displayCurrency, exchange)}
+            onChange={(v) => setMoneyItem("savings", row.id, "target", v)}
+            type="number" min="0"
+            step={displayCurrency === USD ? "0.01" : "1"}
+            style={{ textAlign: "right" }}
+          />
+        </div>
+        <div className="goal-fund-field">
+          <label>Saved</label>
+          <Input
+            value={inputValue(row.saved ?? 0, displayCurrency, exchange)}
+            onChange={(v) => setMoneyItem("savings", row.id, "saved", v)}
+            type="number" min="0"
+            step={displayCurrency === USD ? "0.01" : "1"}
+            style={{ textAlign: "right" }}
+          />
+        </div>
+        <div className="goal-fund-field">
+          <label>Monthly</label>
+          <Input
+            value={inputValue(row.monthly ?? 0, displayCurrency, exchange)}
+            onChange={(v) => setMoneyItem("savings", row.id, "monthly", v)}
+            type="number" min="0"
+            step={displayCurrency === USD ? "0.01" : "1"}
+            style={{ textAlign: "right" }}
+          />
+        </div>
+        <div className="goal-fund-field">
+          <label>Goal Date</label>
+          <Input
+            value={row.targetDate || ""}
+            onChange={(targetDate) => setItem("savings", row.id, { targetDate })}
+            type="date"
+          />
+        </div>
+        <div className="goal-fund-field goal-fund-suggested">
+          <label>Suggested</label>
+          <Button
+            title="Apply suggested monthly amount"
+            onClick={() => setItem("savings", row.id, { monthly: fund.suggestedMonthly })}
+          >
+            {displayMoney(fund.suggestedMonthly, displayCurrency, exchange)} →
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MoneySection({
   title,
   section,
@@ -649,24 +689,40 @@ function MoneySection({
   delItem,
 }) {
   const accent = ACCENT[section];
-  const template = [
-    "minmax(150px,1fr)",
-    ...columns.map((column) =>
-      column === "targetDate"
-        ? "130px"
-        : column === "suggestedMonthly"
-          ? "126px"
-          : "100px",
-    ),
-    "32px",
-  ].join(" ");
+  const template = ["minmax(0,1fr)", ...columns.map(() => "76px"), "28px"].join(" ");
+
+  if (section === "savings") {
+    return (
+      <Card className="money-section" style={{ borderTopColor: accent }}>
+        <div className="card-head">
+          <h3 style={{ color: accent }}><Landmark size={18} />{title}</h3>
+          <Button variant="primary" onClick={() => addItem(section)}>
+            <Plus size={14} /> Add
+          </Button>
+        </div>
+        <div className="stack">
+          {rows.map((row) => (
+            <GoalFundRow
+              key={row.id}
+              row={row}
+              fund={fundSuggestion(row)}
+              displayCurrency={displayCurrency}
+              exchange={exchange}
+              setItem={setItem}
+              setMoneyItem={setMoneyItem}
+              delItem={delItem}
+            />
+          ))}
+          {!rows.length && <div className="empty-inline">No goal funds yet — click Add.</div>}
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="money-section" style={{ borderTopColor: accent }}>
       <div className="card-head">
-        <h3 style={{ color: accent }}>
-          {section === "savings" ? <Landmark size={18} /> : null}
-          {title}
-        </h3>
+        <h3 style={{ color: accent }}>{title}</h3>
         <Button variant="primary" onClick={() => addItem(section)}>
           <Plus size={14} /> Add
         </Button>
@@ -680,7 +736,6 @@ function MoneySection({
       </div>
       <div className="stack">
         {rows.map((row) => {
-          const fund = section === "savings" ? fundSuggestion(row) : null;
           return (
             <div className="fin-row" style={{ gridTemplateColumns: template }} key={row.id}>
               <Input
@@ -727,19 +782,10 @@ function MoneySection({
               <button className="icon-btn danger" onClick={() => delItem(section, row.id)}>
                 <Trash2 size={14} />
               </button>
-              {section === "savings" && (
-                <div className="fund-progress">
-                  <span
-                    style={{
-                      width: `${fund.progress}%`,
-                      background: accent,
-                    }}
-                  />
-                </div>
-              )}
             </div>
           );
         })}
+        {!rows.length && <div className="empty-inline">No items yet — click Add.</div>}
       </div>
     </Card>
   );
