@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+.env*.local
+*.log
+.DS_Store
+Thumbs.db
+.playwright-mcp/
+productivity_tracker.jsx
+prod.txt
+tracker-today-redesign.png

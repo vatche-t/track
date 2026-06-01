@@ -1,0 +1,215 @@
+import { useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  BarChart3,
+  CheckSquare,
+  ClipboardList,
+  Download,
+  Flame,
+  Home,
+  Sunrise,
+  Target,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { Button } from "./components/ui";
+import { activeTask, isMonday, lastWeekISO, localDate } from "./core/date";
+import { AnalyticsTab } from "./features/AnalyticsTab";
+import { ExportModal } from "./features/ExportModal";
+import { FinanceTab } from "./features/FinanceTab";
+import { FocusBar } from "./features/FocusBar";
+import { GoalsTab } from "./features/GoalsTab";
+import { HabitsTab } from "./features/HabitsTab";
+import { RoutinesTab } from "./features/RoutinesTab";
+import { TasksTab } from "./features/TasksTab";
+import { TodayTab } from "./features/TodayTab";
+import { WeeklyReviewTab } from "./features/WeeklyReviewTab";
+import { useFocusTimer } from "./hooks/useFocusTimer";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useTrackerData } from "./hooks/useTrackerData";
+import { AppStyles } from "./styles/AppStyles";
+
+const TABS = [
+  ["today", "Today", Home],
+  ["tasks", "Tasks", CheckSquare],
+  ["routines", "Routines", Sunrise],
+  ["goals", "Goals", Target],
+  ["habits", "Habits", Flame],
+  ["finance", "Finance", Wallet],
+  ["review", "Weekly Review", ClipboardList],
+  ["analytics", "Analytics", BarChart3],
+];
+
+export default function App() {
+  const [tab, setTab] = useState("today");
+  const [showExport, setShowExport] = useState(false);
+  const {
+    loaded,
+    data: trackerData,
+    setters,
+    tasks,
+    setTasks,
+    recurringTemplates,
+    setRecurringTemplates,
+    routines,
+    setRoutines,
+    goals,
+    setGoals,
+    habits,
+    setHabits,
+    finance,
+    setFinance,
+    reviews,
+    setReviews,
+  } = useTrackerData();
+  const { timer, setTimer, startFocus } = useFocusTimer();
+  const data = useMemo(
+    () => ({ ...trackerData, timer }),
+    [trackerData, timer],
+  );
+  const dailyStats = useMemo(() => {
+    const todayTasks = tasks.filter((task) => task.date === localDate());
+    const doneTasks = todayTasks.filter(
+      (task) => task.status === "Done",
+    ).length;
+    const doneHabits = habits.filter(
+      (habit) => habit.log?.[localDate()],
+    ).length;
+    const total = todayTasks.length + habits.length;
+    const done = doneTasks + doneHabits;
+    return {
+      doneTasks,
+      totalTasks: todayTasks.length,
+      doneHabits,
+      totalHabits: habits.length,
+      percent: total ? Math.round((done / total) * 100) : 0,
+    };
+  }, [tasks, habits]);
+  const reviewDue =
+    isMonday() && !reviews.some((review) => review.week === lastWeekISO());
+  const badges = useMemo(
+    () => ({
+      tasks: tasks.filter(
+        (task) => task.date === localDate() && activeTask(task),
+      ).length,
+      review: reviewDue ? 1 : 0,
+    }),
+    [tasks, reviewDue],
+  );
+
+  useKeyboardShortcuts(TABS, setTab);
+
+  if (!loaded) return <div className="loading">Loading tracker data...</div>;
+
+  return (
+    <div className="app">
+      <AppStyles />
+      <header className="topbar">
+        <div className="brand">
+          <div className="mark">
+            <TrendingUp size={22} />
+          </div>
+          <div>
+            <h1>Tracker</h1>
+            <span>SQLite local DB - {localDate()}</span>
+          </div>
+        </div>
+        <div className="header-actions">
+          <div className="planning-badge">
+            <strong>{dailyStats.percent}%</strong>
+            <span>
+              {dailyStats.doneTasks}/{dailyStats.totalTasks} tasks -{" "}
+              {dailyStats.doneHabits}/{dailyStats.totalHabits} habits
+            </span>
+          </div>
+          <Button variant="outline" onClick={() => setShowExport(true)}>
+            <Download size={16} /> Export / Backup
+          </Button>
+        </div>
+      </header>
+      <nav className="tabs">
+        {TABS.map(([id, label, Icon]) => (
+          <button
+            key={id}
+            className={`${tab === id ? "active" : ""} ${id === "review" && reviewDue ? "needs-review" : ""}`}
+            onClick={() => setTab(id)}
+          >
+            <Icon size={17} /> {label}
+            {badges[id] ? (
+              <span className="tab-count">{badges[id]}</span>
+            ) : null}
+          </button>
+        ))}
+      </nav>
+      <main>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            {tab === "today" && (
+              <TodayTab
+                tasks={tasks}
+                setTasks={setTasks}
+                habits={habits}
+                setHabits={setHabits}
+                setTab={setTab}
+                startFocus={startFocus}
+              />
+            )}
+            {tab === "tasks" && (
+              <TasksTab
+                tasks={tasks}
+                setTasks={setTasks}
+                recurringTemplates={recurringTemplates}
+                setRecurringTemplates={setRecurringTemplates}
+                startFocus={startFocus}
+              />
+            )}
+            {tab === "routines" && (
+              <RoutinesTab routines={routines} setRoutines={setRoutines} />
+            )}
+            {tab === "goals" && <GoalsTab goals={goals} setGoals={setGoals} />}
+            {tab === "habits" && (
+              <HabitsTab habits={habits} setHabits={setHabits} />
+            )}
+            {tab === "finance" && (
+              <FinanceTab finance={finance} setFinance={setFinance} />
+            )}
+            {tab === "review" && (
+              <WeeklyReviewTab
+                reviews={reviews}
+                setReviews={setReviews}
+                tasks={tasks}
+                habits={habits}
+                goals={goals}
+                finance={finance}
+              />
+            )}
+            {tab === "analytics" && (
+              <AnalyticsTab
+                tasks={tasks}
+                habits={habits}
+                goals={goals}
+                finance={finance}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+      {showExport && (
+        <ExportModal
+          data={data}
+          setters={setters}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+      <AnimatePresence>
+        <FocusBar timer={timer} setTimer={setTimer} tasks={tasks} />
+      </AnimatePresence>
+    </div>
+  );
+}
