@@ -797,7 +797,7 @@ function MoneySection({
   delItem,
 }) {
   const accent = ACCENT[section];
-  const template = ["minmax(0,1fr)", ...columns.map(() => "76px"), "28px"].join(" ");
+  const template = ["minmax(0,1.2fr)", ...columns.map(() => "minmax(72px,1fr)"), "32px"].join(" ");
 
   if (section === "savings") {
     return (
