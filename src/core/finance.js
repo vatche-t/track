@@ -94,7 +94,7 @@ const withDefaultCategories = (categories) => {
 
 export const DEFAULT_SAVINGS_FUNDS = [
   {
-    id: uid(),
+    id: "house-down-payment",
     name: "House down payment",
     target: 7500000,
     saved: 0,
@@ -102,7 +102,7 @@ export const DEFAULT_SAVINGS_FUNDS = [
     targetDate: "",
   },
   {
-    id: uid(),
+    id: "fiancee-relocation-fund",
     name: "Fiancee relocation fund",
     target: 1000000,
     saved: 0,
@@ -110,9 +110,25 @@ export const DEFAULT_SAVINGS_FUNDS = [
     targetDate: "",
   },
   {
-    id: uid(),
+    id: "fiancee-support-buffer",
+    name: "Fiancee support buffer",
+    target: 1000000,
+    saved: 0,
+    monthly: 100000,
+    targetDate: "",
+  },
+  {
+    id: "emergency-fund",
     name: "Emergency fund",
     target: 1500000,
+    saved: 0,
+    monthly: 100000,
+    targetDate: "",
+  },
+  {
+    id: "investment-seed-fund",
+    name: "Investment seed fund",
+    target: 3000000,
     saved: 0,
     monthly: 100000,
     targetDate: "",
@@ -151,17 +167,35 @@ export const STARTER_EXPENSES = [
 ];
 
 export const ensureStarterExpenses = (finance = {}) => {
-  if (finance.seededStarterExpenses) return finance;
   const expenses = finance.expenses || [];
   const ids = new Set(expenses.map((expense) => expense.id));
-  const missing = STARTER_EXPENSES.filter((expense) => !ids.has(expense.id));
+  const missingExpenses = finance.seededStarterExpenses
+    ? []
+    : STARTER_EXPENSES.filter((expense) => !ids.has(expense.id));
   const categories = withDefaultCategories(finance.categories);
+  const savings = finance.savings || [];
+  const defaultByName = new Map(DEFAULT_SAVINGS_FUNDS.map((fund) => [fund.name.toLowerCase(), fund]));
+  const repairedSavings = savings.map((fund) => {
+    const match = defaultByName.get(String(fund.name || "").toLowerCase());
+    if (!match) return fund;
+    return {
+      ...fund,
+      target: +fund.target > 0 ? fund.target : match.target,
+      monthly: +fund.monthly > 0 ? fund.monthly : match.monthly,
+    };
+  });
+  const savingsNames = new Set(repairedSavings.map((fund) => String(fund.name || "").toLowerCase()));
+  const missingSavings = finance.seededCoreSavingsFunds
+    ? []
+    : DEFAULT_SAVINGS_FUNDS.filter((fund) => !savingsNames.has(fund.name.toLowerCase()));
 
   return {
     ...finance,
-    expenses: [...missing, ...expenses],
+    expenses: [...missingExpenses, ...expenses],
     categories,
+    savings: [...repairedSavings, ...missingSavings],
     seededStarterExpenses: true,
+    seededCoreSavingsFunds: true,
   };
 };
 
@@ -243,16 +277,16 @@ const normalizeSavingsRow = (row) => ({
 export const normalizeFinance = (finance = {}) => {
   const exchange = normalizeExchange(finance.exchange);
   return {
-    income: finance.income?.length
+    income: Array.isArray(finance.income)
       ? finance.income.map((row) => moneyRow(row, ["budget", "actual"]))
       : [{ id: uid(), name: "Senior AI Engineer salary", budget: 1200000, actual: 1200000 }],
-    fixed: finance.fixed?.length
+    fixed: Array.isArray(finance.fixed)
       ? finance.fixed.map((row) => moneyRow(row, ["budget", "actual"]))
       : [
           { id: uid(), name: "Rent", budget: 90000, actual: 90000 },
           { id: uid(), name: "Utilities", budget: 30000, actual: 30000 },
         ],
-    variable: finance.variable?.length
+    variable: Array.isArray(finance.variable)
       ? finance.variable.map((row) => moneyRow(row, ["budget", "actual"]))
       : [
           { id: uid(), name: "Groceries", budget: 20000, actual: 0 },
@@ -260,7 +294,7 @@ export const normalizeFinance = (finance = {}) => {
           { id: uid(), name: "Eating out", budget: 43000, actual: 0 },
           { id: uid(), name: "Cigarettes", budget: 13500, actual: 0 },
         ],
-    savings: finance.savings?.length
+    savings: Array.isArray(finance.savings)
       ? finance.savings.map(normalizeSavingsRow)
       : DEFAULT_SAVINGS_FUNDS,
     expenses: (finance.expenses || []).map((expense) =>
@@ -379,37 +413,103 @@ export const savingsPlan = (finance) =>
     ...fundSuggestion(fund),
   }));
 
-export const lumpSumAllocation = (amount, savings, exchange = DEFAULT_EXCHANGE, currency = AMD) => {
-  const amdAmount = toAMD(+amount || 0, currency, exchange);
-  const funds = (savings || []).map((fund) => ({
-    ...fund,
-    remaining: Math.max(0, (+fund.target || 0) - (+fund.saved || 0)),
-  }));
-  const totalRemaining = funds.reduce((s, f) => s + f.remaining, 0);
-  return funds.map((fund) => ({
-    id: fund.id,
-    name: fund.name,
-    remaining: fund.remaining,
-    suggested:
-      totalRemaining > 0
-        ? Math.round(amdAmount * (fund.remaining / totalRemaining))
-        : Math.round(amdAmount / Math.max(1, funds.length)),
-  }));
+const goalReason = (name, amount, remaining) => {
+  const lower = name.toLowerCase();
+  if (amount <= 0 && remaining <= 0) return "Set a target or increase the remaining gap before funding this goal.";
+  if (amount <= 0) return "No income left after the life cap and higher-priority goals.";
+  if (lower.includes("emergency")) {
+    return "Keeps cash stable before aggressive investing or house saving.";
+  }
+  if (lower.includes("support")) {
+    return "Covers the job-search buffer after relocation without touching house money.";
+  }
+  if (lower.includes("fiance") || lower.includes("relocation")) {
+    return "Near-term relocation support gets protected before long-term goals.";
+  }
+  if (lower.includes("house") || lower.includes("down payment")) {
+    return "Main wealth-building goal receives the remaining monthly surplus.";
+  }
+  if (lower.includes("investment")) {
+    return "Starts long-term investing after stability and relocation are funded.";
+  }
+  if (remaining > 0) return "Allocated from surplus based on the remaining gap.";
+  return "Maintenance allocation after the target is mostly covered.";
 };
 
-export const allocationSuggestion = (income) => {
+export const allocationSuggestion = (income, savings = []) => {
   const amount = +income || 0;
-  const spending = 300000;
-  const fun = 50000;
-  const fiancee = 150000;
-  const emergency = 100000;
-  const house = Math.max(0, amount - spending - fun - fiancee - emergency);
+  const spending = Math.min(300000, amount);
+  const flex = Math.min(50000, Math.max(0, amount - spending));
+  const goalBudget = Math.max(0, amount - spending - flex);
+  const plan = savingsPlan({ savings }).map((fund) => ({
+    ...fund,
+    key: fund.name.toLowerCase(),
+  }));
+
+  const buckets = plan.map((fund) => ({ fund, amount: 0 }));
+  let remainingBudget = goalBudget;
+
+  const assignTo = (match, cap) => {
+    const bucket = buckets.find(({ fund }) => match(fund.key));
+    if (!bucket || remainingBudget <= 0) return 0;
+    const gap = Math.max(0, bucket.fund.remaining);
+    if (gap <= 0) return 0;
+    const allocation = Math.min(remainingBudget, cap, gap);
+    bucket.amount += allocation;
+    remainingBudget -= allocation;
+    return allocation;
+  };
+
+  assignTo((name) => name.includes("emergency"), 100000);
+  assignTo((name) => name.includes("fiance") || name.includes("relocation"), 150000);
+  assignTo((name) => name.includes("support"), 100000);
+  assignTo((name) => name.includes("house") || name.includes("down payment"), remainingBudget);
+  assignTo((name) => name.includes("investment"), remainingBudget);
+
+  const stillOpen = buckets.filter(({ fund }) => fund.remaining > 0 && !fund.key.includes("house") && !fund.key.includes("down payment"));
+  if (remainingBudget > 0 && stillOpen.length) {
+    const totalGap = stillOpen.reduce((total, { fund }) => total + fund.remaining, 0) || stillOpen.length;
+    stillOpen.forEach((bucket, index) => {
+      const share = index === stillOpen.length - 1
+        ? remainingBudget
+        : Math.round(remainingBudget * (bucket.fund.remaining / totalGap));
+      bucket.amount += share;
+      remainingBudget -= share;
+    });
+  }
 
   return [
-    { name: "Spending card", amount: spending, note: "Daily life cap" },
-    { name: "House down payment", amount: house, note: "Main 12-month push" },
-    { name: "Fiancee relocation fund", amount: fiancee, note: "Support buffer" },
-    { name: "Emergency fund", amount: emergency, note: "Safety first" },
-    { name: "Skills / fun", amount: fun, note: "Controlled flexibility" },
+    {
+      name: "Spending card",
+      amount: spending,
+      kind: "reserve",
+      note: "Daily life cap",
+      reason: "Protects a hard monthly spending limit before assigning money to goals.",
+    },
+    ...buckets.map(({ fund, amount: allocation }) => ({
+      id: fund.id,
+      name: fund.name,
+      amount: Math.max(0, Math.round(allocation)),
+      kind: "goal",
+      progress: fund.progress,
+      remaining: fund.remaining,
+      suggestedMonthly: fund.suggestedMonthly,
+      note: `${fund.progress}% funded`,
+      reason: goalReason(fund.name, allocation, fund.remaining),
+    })),
+    {
+      name: "Skills / fun",
+      amount: flex,
+      kind: "reserve",
+      note: "Controlled flexibility",
+      reason: "Small guilt-free buffer so the savings plan is easier to keep.",
+    },
+    ...(remainingBudget > 0 ? [{
+      name: "Unassigned surplus",
+      amount: Math.round(remainingBudget),
+      kind: "unassigned",
+      note: "Needs a target",
+      reason: "Add or increase a goal target so this surplus has a job.",
+    }] : []),
   ];
 };

@@ -117,6 +117,7 @@ export const DEFAULTS = {
     expenses: STARTER_EXPENSES,
     categories: FINANCE_CATEGORIES,
     seededStarterExpenses: true,
+    seededCoreSavingsFunds: true,
   },
   reviews: [],
 };

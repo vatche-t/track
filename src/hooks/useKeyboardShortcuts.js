@@ -4,6 +4,11 @@ export function useKeyboardShortcuts(tabs, setTab) {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      const target = event.target;
+      const isEditable =
+        target?.isContentEditable ||
+        ["INPUT", "SELECT", "TEXTAREA"].includes(target?.tagName);
+      if (isEditable) return;
 
       const index = Number(event.key);
       if (index >= 1 && index <= tabs.length) {

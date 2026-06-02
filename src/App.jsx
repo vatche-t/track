@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  BarChart3,
   CheckSquare,
   ClipboardList,
+  Database,
   Download,
   Flame,
   Home,
@@ -13,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "./components/ui";
 import { activeTask, isMonday, lastWeekISO, localDate } from "./core/date";
+import { AnalyticsTab } from "./features/AnalyticsTab";
 import { ExportModal } from "./features/ExportModal";
 import { FinanceTab } from "./features/FinanceTab";
 import { FocusBar } from "./features/FocusBar";
@@ -34,6 +37,7 @@ const TRACK_TABS = [
   ["goals", "Goals", Target],
   ["habits", "Habits", Flame],
   ["review", "Weekly Review", ClipboardList],
+  ["analytics", "Analytics", BarChart3],
 ];
 
 export default function App() {
@@ -111,10 +115,17 @@ export default function App() {
           </div>
           <div>
             <h1>Tracker</h1>
-            <span>SQLite local DB - {localDate()}</span>
+            <span>Browser-local SQLite - {localDate()}</span>
           </div>
         </div>
         <div className="header-actions">
+          <div
+            className="privacy-badge"
+            title="Your tracker and finance data stays in this browser. Exchange-rate refresh sends no personal data. AI buttons send a small snapshot only when clicked."
+          >
+            <Database size={14} />
+            <span>Local data</span>
+          </div>
           <div className="app-switch" aria-label="Choose app">
             <button
               type="button"
@@ -203,6 +214,14 @@ export default function App() {
                   <WeeklyReviewTab
                     reviews={reviews}
                     setReviews={setReviews}
+                    tasks={tasks}
+                    habits={habits}
+                    goals={goals}
+                    finance={finance}
+                  />
+                )}
+                {tab === "analytics" && (
+                  <AnalyticsTab
                     tasks={tasks}
                     habits={habits}
                     goals={goals}

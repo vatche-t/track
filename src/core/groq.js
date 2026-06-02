@@ -136,6 +136,45 @@ TASK: Give exactly 3 recommendations. Format each as "1. Action — reason." Kee
   return chat([{ role: "user", content: prompt }], { maxTokens: 900, temperature: 0.15 });
 }
 
+export async function refineRecommendedSplit({ income, totals, savings, suggestion, exchange }) {
+  const rate = Math.round(exchange?.rate || 390);
+  const savingsLines = (savings || []).map((fund) => {
+    const target = +fund.target || 0;
+    const saved = +fund.saved || 0;
+    return `  - ${fund.name}: saved ${saved.toLocaleString()} AMD / target ${target.toLocaleString()} AMD, current monthly ${(+fund.monthly || 0).toLocaleString()} AMD`;
+  }).join("\n") || "  None";
+
+  const suggestionLines = (suggestion || []).map((item) =>
+    `  - ${item.name}: ${Math.round(+item.amount || 0).toLocaleString()} AMD (${item.kind || "item"}) - ${item.reason || item.note || ""}`
+  ).join("\n") || "  None";
+
+  const prompt = `You are refining a monthly salary split for someone living in Yerevan, Armenia. 1 USD = ${rate} AMD.
+
+Current finance data:
+- Monthly income: ${(+income || 0).toLocaleString()} AMD
+- Monthly expenses: ${(+totals.expenses || 0).toLocaleString()} AMD
+- Logged expenses this month: ${(+totals.loggedExpenses || 0).toLocaleString()} AMD
+- Current monthly goal transfers: ${(+totals.monthlyGoal || 0).toLocaleString()} AMD
+- After-plan cash: ${(+totals.leftAfterPlan || 0).toLocaleString()} AMD
+
+Savings funds:
+${savingsLines}
+
+Current recommended split:
+${suggestionLines}
+
+TASK:
+Give a better split only if the current one should change. Include exact AMD amounts per goal and a one-line reason for each.
+
+RULES:
+- Do not invent goals or income.
+- Keep Spending card near 300,000 AMD unless income is too low.
+- Prioritize emergency cash and near-term relocation before house/investments.
+- Format as 3-5 bullets, each "Goal: amount AMD - reason".`;
+
+  return chat([{ role: "user", content: prompt }], { maxTokens: 420, temperature: 0.2 });
+}
+
 export async function askDataQuestion(question, { tasks, habits, goals, finance, totals, exchange }) {
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
@@ -171,6 +210,72 @@ STEPS:
 
 Answer in 3 sentences max.`,
   }], { maxTokens: 250, temperature: 0.3 });
+}
+
+export async function askFinanceAnalyticsQuestion(question, { finance, totals, exchange }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const thisMonth = today.slice(0, 7);
+  const rate = Math.round(exchange?.rate || 390);
+  const monthlyIncome = totals.income || 0;
+  const savingsRate = monthlyIncome > 0 ? Math.round((totals.monthlyGoal / monthlyIncome) * 100) : 0;
+  const currentMonthExpenses = (finance.expenses || []).filter((expense) =>
+    (expense.date || "").startsWith(thisMonth),
+  );
+
+  const categoryLines = [...currentMonthExpenses.reduce((map, expense) => {
+    const name = expense.categoryName || "Other";
+    map.set(name, (map.get(name) || 0) + (+expense.amountAMD || 0));
+    return map;
+  }, new Map()).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([name, amount]) => `${name}: ${Math.round(amount).toLocaleString()} AMD`)
+    .join(" | ") || "none";
+
+  const fundLines = (finance.savings || []).map((fund) => {
+    const target = +fund.target || 0;
+    const saved = +fund.saved || 0;
+    const remaining = Math.max(0, target - saved);
+    const progress = target > 0 ? Math.round((saved / target) * 100) : 0;
+    return `${fund.name}: saved ${saved.toLocaleString()} / target ${target.toLocaleString()} AMD (${progress}%, ${remaining.toLocaleString()} remaining, monthly ${(+fund.monthly || 0).toLocaleString()})`;
+  }).join(" | ") || "none";
+
+  const incomeLines = (finance.income || [])
+    .map((row) => `${row.name}: actual ${(+row.actual || 0).toLocaleString()} AMD, plan ${(+row.budget || 0).toLocaleString()} AMD`)
+    .join(" | ") || "none";
+  const fixedLines = (finance.fixed || [])
+    .map((row) => `${row.name}: actual ${(+row.actual || 0).toLocaleString()} AMD`)
+    .join(" | ") || "none";
+  const variableLines = (finance.variable || [])
+    .map((row) => `${row.name}: actual ${(+row.actual || 0).toLocaleString()} AMD, plan ${(+row.budget || 0).toLocaleString()} AMD`)
+    .join(" | ") || "none";
+  const recentExpenses = currentMonthExpenses
+    .slice(0, 10)
+    .map((expense) => `${expense.date}: ${expense.note} - ${Math.round(+expense.amountAMD || 0).toLocaleString()} AMD (${expense.categoryName || "Other"})`)
+    .join(" | ") || "none";
+
+  return chat([{
+    role: "user",
+    content: `FINANCE ANALYTICS DATA (today ${today}, 1 USD = ${rate} AMD):
+Summary - Income: ${totals.income.toLocaleString()} AMD | Fixed: ${totals.fixed.toLocaleString()} AMD | Variable plan actual: ${totals.variableManual.toLocaleString()} AMD | Logged expenses: ${totals.loggedExpenses.toLocaleString()} AMD | Total expenses: ${totals.expenses.toLocaleString()} AMD | Monthly goal transfers: ${totals.monthlyGoal.toLocaleString()} AMD | After plan: ${totals.leftAfterPlan.toLocaleString()} AMD | Savings rate from planned transfers: ${savingsRate}%
+Income rows - ${incomeLines}
+Fixed rows - ${fixedLines}
+Variable rows - ${variableLines}
+Savings funds - ${fundLines}
+Spend by category this month - ${categoryLines}
+Recent expenses - ${recentExpenses}
+
+QUESTION: ${question}
+
+RULES:
+- Answer only from this finance data.
+- If the question requires missing data, name the missing number first.
+- Use AMD amounts and mention USD only when useful using the given rate.
+- Be analytical: compare categories, budget vs actual, goal gap, burn rate, or after-plan cash where relevant.
+- No generic tracking advice; the app already tracks data.
+
+Answer in 4 concise bullets maximum.`,
+  }], { maxTokens: 450, temperature: 0.25 });
 }
 
 export async function getGoalAdvice({ goal, totals, exchange }) {

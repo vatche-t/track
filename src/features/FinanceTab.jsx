@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
+  BarChart3,
   BrainCircuit,
   CalendarDays,
   Landmark,
@@ -13,7 +14,8 @@ import {
   Wallet,
 } from "lucide-react";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
-import { GROQ_MODEL, getFinancialAdvice, getSpendingForecast } from "../core/groq";
+import { FinanceAnalyticsPanel } from "./AnalyticsTab";
+import { GROQ_MODEL, getFinancialAdvice, getSpendingForecast, refineRecommendedSplit } from "../core/groq";
 import { C } from "../core/constants";
 import { localDate, submitOnEnter, sum, uid } from "../core/date";
 import {
@@ -30,7 +32,6 @@ import {
   formatMoney,
   fromAMD,
   fundSuggestion,
-  lumpSumAllocation,
   normalizeFinance,
   toAMD,
   usd,
@@ -58,6 +59,37 @@ const inputValue = (amdValue, displayCurrency, exchange) => {
   return displayCurrency === USD ? Number(value.toFixed(2)) : Math.round(value);
 };
 
+const cleanMoneyInput = (value, currency = AMD) => {
+  const cleaned = String(value || "").replace(/[^\d.]/g, "");
+  if (currency === USD) {
+    const [whole = "", ...rest] = cleaned.split(".");
+    const cents = rest.join("").slice(0, 2);
+    return cents ? `${whole}.${cents}` : rest.length ? `${whole}.` : whole;
+  }
+  return cleaned.replace(/\./g, "");
+};
+
+const formatMoneyInput = (value, currency = AMD) => {
+  const cleaned = cleanMoneyInput(value, currency);
+  if (!cleaned) return "";
+  const [whole, cents] = cleaned.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return currency === USD && cleaned.includes(".") ? `${grouped}.${cents || ""}` : grouped;
+};
+
+function MoneyInput({ value, onChange, currency = AMD, ...props }) {
+  return (
+    <Input
+      value={formatMoneyInput(value, currency)}
+      onChange={(next) => onChange(cleanMoneyInput(next, currency))}
+      type="text"
+      inputMode={currency === USD ? "decimal" : "numeric"}
+      autoComplete="off"
+      {...props}
+    />
+  );
+}
+
 const rateAge = (fetchedAt) => {
   if (!fetchedAt) return "using fallback";
   const minutes = Math.max(0, Math.round((Date.now() - new Date(fetchedAt)) / 60000));
@@ -72,6 +104,7 @@ export function FinanceTab({ finance, setFinance }) {
   const categories = model.categories;
   const exchange = model.exchange;
   const [displayCurrency, setDisplayCurrency] = useState(AMD);
+  const [financeView, setFinanceView] = useState("plan");
   const [rateBusy, setRateBusy] = useState(false);
   const [rateError, setRateError] = useState("");
   const [draft, setDraft] = useState({
@@ -86,7 +119,7 @@ export function FinanceTab({ finance, setFinance }) {
   const detected = detectExpenseCategory(draft.note);
   const categoryOptions = categories.map((category) => category.name);
   const salary = sum(model.income, "actual");
-  const suggestion = allocationSuggestion(salary);
+  const suggestion = allocationSuggestion(salary, model.savings);
   const spendingCap = suggestion[0]?.amount || 300000;
   const loggedThisMonth = totals.fixed + totals.variableManual + totals.loggedExpenses;
   const capPct = Math.min(100, Math.round((loggedThisMonth / spendingCap) * 100));
@@ -210,7 +243,9 @@ export function FinanceTab({ finance, setFinance }) {
     updateFinance((previous) => ({
       ...previous,
       savings: previous.savings.map((fund) => {
-        const match = suggestion.find((item) => item.name === fund.name);
+        const match = suggestion.find((item) =>
+          item.kind === "goal" && (item.id === fund.id || item.name === fund.name)
+        );
         return match ? { ...fund, monthly: match.amount } : fund;
       }),
     }));
@@ -222,6 +257,22 @@ export function FinanceTab({ finance, setFinance }) {
         icon={<Wallet />}
         action={
           <div className="currency-toolbar">
+            <div className="segmented">
+              <button
+                className={financeView === "plan" ? "active" : ""}
+                onClick={() => setFinanceView("plan")}
+                type="button"
+              >
+                <Wallet size={14} /> Plan
+              </button>
+              <button
+                className={financeView === "analytics" ? "active" : ""}
+                onClick={() => setFinanceView("analytics")}
+                type="button"
+              >
+                <BarChart3 size={14} /> Analytics
+              </button>
+            </div>
             <div className="segmented">
               {MONEY_CURRENCIES.map((currency) => (
                 <button
@@ -252,6 +303,13 @@ export function FinanceTab({ finance, setFinance }) {
         }
       />
 
+      {financeView === "analytics" ? (
+        <>
+          <AiAdviceCard totals={totals} model={model} />
+          <FinanceAnalyticsPanel finance={model} />
+        </>
+      ) : (
+        <>
       <Card className="money-brief">
         <div>
           <span className="eyebrow">12 month rule</span>
@@ -295,6 +353,8 @@ export function FinanceTab({ finance, setFinance }) {
         displayCurrency={displayCurrency}
       />
 
+      <AiAdviceCard totals={totals} model={model} />
+
       <div className="money-layout">
         <Card className="expense-capture">
           <div className="card-head">
@@ -325,12 +385,10 @@ export function FinanceTab({ finance, setFinance }) {
               }
               placeholder="Example: taxi to work, Yerevan City groceries"
             />
-            <Input
+            <MoneyInput
               value={draft.amount}
               onChange={(amount) => setDraft({ ...draft, amount })}
-              type="number"
-              min="0"
-              step="0.01"
+              currency={draft.currency}
               placeholder={draft.currency}
             />
             <Input
@@ -370,50 +428,16 @@ export function FinanceTab({ finance, setFinance }) {
           />
         </Card>
 
-        <Card className="allocation-card">
-          <div className="card-head">
-            <div>
-              <h3>
-                <Target size={18} /> Salary Allocation
-              </h3>
-              <span>Suggestion updates when income changes.</span>
-            </div>
-            <Button onClick={applySuggestion}>
-              <ArrowRight size={15} /> Apply
-            </Button>
-          </div>
-          <div className="allocation-list">
-            {suggestion.map((item) => (
-              <div className="allocation-row" key={item.name}>
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>{item.note}</span>
-                </div>
-                <b>{displayMoney(item.amount, displayCurrency, exchange)}</b>
-              </div>
-            ))}
-          </div>
-        </Card>
+        <RecommendedSplitCard
+          income={salary}
+          totals={totals}
+          model={model}
+          suggestion={suggestion}
+          applySuggestion={applySuggestion}
+          displayCurrency={displayCurrency}
+          exchange={exchange}
+        />
       </div>
-
-      <WindfallCard
-        savings={model.savings}
-        exchange={exchange}
-        displayCurrency={displayCurrency}
-        onApply={(patches) =>
-          updateFinance((prev) => ({
-            ...prev,
-            savings: prev.savings.map((fund) => {
-              const patch = patches.find((p) => p.id === fund.id);
-              return patch
-                ? { ...fund, saved: (+fund.saved || 0) + patch.suggested }
-                : fund;
-            }),
-          }))
-        }
-      />
-
-      <AiAdviceCard totals={totals} model={model} />
 
       <div className="finance-grid">
         <MoneySection
@@ -465,7 +489,141 @@ export function FinanceTab({ finance, setFinance }) {
           delItem={delItem}
         />
       </div>
+        </>
+      )}
     </div>
+  );
+}
+
+function RecommendedSplitCard({ income, totals, model, suggestion, applySuggestion, displayCurrency, exchange }) {
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const goalRows = suggestion.filter((item) => item.kind === "goal");
+  const reserveRows = suggestion.filter((item) => item.kind === "reserve");
+  const unassignedRows = suggestion.filter((item) => item.kind === "unassigned");
+  const goalTotal = goalRows.reduce((total, item) => total + (+item.amount || 0), 0);
+  const reserveTotal = reserveRows.reduce((total, item) => total + (+item.amount || 0), 0);
+  const unassignedTotal = unassignedRows.reduce((total, item) => total + (+item.amount || 0), 0);
+  const incomePct = income > 0 ? Math.round((goalTotal / income) * 100) : 0;
+
+  useEffect(() => {
+    setAiText("");
+    setAiError("");
+  }, [income, goalTotal]);
+
+  const askAi = async () => {
+    setAiBusy(true);
+    setAiError("");
+    setAiText("");
+    try {
+      const text = await refineRecommendedSplit({
+        income,
+        totals,
+        savings: model.savings,
+        suggestion,
+        exchange,
+      });
+      setAiText(text);
+    } catch (error) {
+      setAiError(error.message);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  return (
+    <Card className="allocation-card recommended-split-card">
+      <div className="card-head split-card-head">
+        <div>
+          <h3>
+            <Target size={18} /> Recommended split
+          </h3>
+          <span>Auto-calculated from income, goal gaps, and the 300,000 AMD life cap.</span>
+        </div>
+        <div className="split-actions">
+          <Button onClick={askAi} disabled={aiBusy}>
+            {aiBusy ? "Thinking..." : <><BrainCircuit size={14} /> Ask AI</>}
+          </Button>
+          <Button variant="primary" onClick={applySuggestion}>
+            <ArrowRight size={15} /> Apply
+          </Button>
+        </div>
+      </div>
+
+      <div className="split-summary">
+        <div>
+          <span>Income</span>
+          <b>{displayMoney(income, displayCurrency, exchange)}</b>
+          <small>Your monthly actual income.</small>
+        </div>
+        <div>
+          <span>Reserved</span>
+          <b>{displayMoney(reserveTotal, displayCurrency, exchange)}</b>
+          <small>Spending card plus skills/fun.</small>
+        </div>
+        <div>
+          <span>To goals</span>
+          <b>{displayMoney(goalTotal, displayCurrency, exchange)}</b>
+          <small>Amount Apply will write to goals.</small>
+        </div>
+        <div>
+          <span>Unassigned</span>
+          <b style={{ color: unassignedTotal > 0 ? C.amber : C.green }}>
+            {displayMoney(unassignedTotal, displayCurrency, exchange)}
+          </b>
+          <small>Money still without a job.</small>
+        </div>
+      </div>
+      <div className="split-rate-line">
+        <span>Goal rate after reserves</span>
+        <b>{incomePct}% of income</b>
+      </div>
+
+      <div className="recommended-goals">
+        {goalRows.map((item) => {
+          const pct = income > 0 ? Math.min(100, Math.round((item.amount / income) * 100)) : 0;
+          return (
+            <div className="recommended-goal" key={item.id || item.name}>
+              <div className="recommended-goal-top">
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>{item.reason}</span>
+                </div>
+                <b>{displayMoney(item.amount, displayCurrency, exchange)}</b>
+              </div>
+              <div className="recommended-progress">
+                <i style={{ width: `${pct}%` }} />
+              </div>
+              <div className="recommended-meta">
+                <span>{pct}% of income</span>
+                <span>{item.progress}% funded</span>
+                <span>Gap {displayMoney(item.remaining, displayCurrency, exchange)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="reserve-strip">
+        {[...reserveRows, ...unassignedRows].map((item) => (
+          <div key={item.name}>
+            <span>{item.name}</span>
+            <b>{displayMoney(item.amount, displayCurrency, exchange)}</b>
+            <small>{item.reason}</small>
+          </div>
+        ))}
+      </div>
+
+      {aiError && <div className="rate-error">{aiError}</div>}
+      {aiText && (
+        <div className="split-ai-result">
+          {aiText.split("\n").filter(Boolean).map((line, index) => (
+            <p key={index}>{line}</p>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -627,7 +785,7 @@ function AiAdviceCard({ totals, model }) {
       <div className="card-head">
         <div>
           <h3><BrainCircuit size={18} /> AI Financial Advice</h3>
-          <span>Powered by Groq · {GROQ_MODEL} · based on your current month data</span>
+          <span>Powered by Groq · {GROQ_MODEL} · sends current finance snapshot only when clicked</span>
         </div>
         <Button variant="primary" onClick={ask} disabled={busy}>
           {busy ? "Thinking…" : "Get Advice"}
@@ -648,63 +806,6 @@ function AiAdviceCard({ totals, model }) {
   );
 }
 
-
-function WindfallCard({ savings, exchange, displayCurrency, onApply }) {
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState(AMD);
-  const amdAmount = toAMD(+amount || 0, currency, exchange);
-  const splits = lumpSumAllocation(amdAmount, savings, exchange, AMD);
-  const hasAmount = amdAmount > 0;
-  return (
-    <Card>
-      <div className="card-head">
-        <div>
-          <h3>Windfall Allocator</h3>
-          <span>Got paid back, received a bonus? Split it across your goals by remaining gap.</span>
-        </div>
-      </div>
-      <div className="windfall-form" onKeyDown={(e) => e.key === "Enter" && hasAmount && onApply(splits)}>
-        <Input
-          value={amount}
-          onChange={setAmount}
-          type="number"
-          min="0"
-          step="1"
-          placeholder="Amount received"
-        />
-        <Input
-          value={currency}
-          onChange={setCurrency}
-          options={MONEY_CURRENCIES}
-        />
-        {hasAmount && (
-          <span className="windfall-amd">
-            = {amd(amdAmount)}
-          </span>
-        )}
-      </div>
-      {hasAmount && splits.length > 0 && (
-        <div className="windfall-splits">
-          {splits.map((split) => (
-            <div className="windfall-row" key={split.id}>
-              <div>
-                <strong>{split.name}</strong>
-                <span>{amd(split.remaining)} still needed</span>
-              </div>
-              <b>{displayMoney(split.suggested, displayCurrency, exchange)}</b>
-            </div>
-          ))}
-          <Button variant="primary" onClick={() => onApply(splits)} style={{ marginTop: 10 }}>
-            Apply All to Savings
-          </Button>
-        </div>
-      )}
-      {!savings.length && (
-        <div className="empty-inline">Add savings goals below to use the allocator.</div>
-      )}
-    </Card>
-  );
-}
 
 function GoalFundRow({ row, fund, displayCurrency, exchange, setItem, setMoneyItem, delItem }) {
   return (
@@ -733,31 +834,28 @@ function GoalFundRow({ row, fund, displayCurrency, exchange, setItem, setMoneyIt
       <div className="goal-fund-fields">
         <div className="goal-fund-field">
           <label>Target</label>
-          <Input
+          <MoneyInput
             value={inputValue(row.target ?? 0, displayCurrency, exchange)}
             onChange={(v) => setMoneyItem("savings", row.id, "target", v)}
-            type="number" min="0"
-            step={displayCurrency === USD ? "0.01" : "1"}
+            currency={displayCurrency}
             style={{ textAlign: "right" }}
           />
         </div>
         <div className="goal-fund-field">
           <label>Saved</label>
-          <Input
+          <MoneyInput
             value={inputValue(row.saved ?? 0, displayCurrency, exchange)}
             onChange={(v) => setMoneyItem("savings", row.id, "saved", v)}
-            type="number" min="0"
-            step={displayCurrency === USD ? "0.01" : "1"}
+            currency={displayCurrency}
             style={{ textAlign: "right" }}
           />
         </div>
         <div className="goal-fund-field">
           <label>Monthly</label>
-          <Input
+          <MoneyInput
             value={inputValue(row.monthly ?? 0, displayCurrency, exchange)}
             onChange={(v) => setMoneyItem("savings", row.id, "monthly", v)}
-            type="number" min="0"
-            step={displayCurrency === USD ? "0.01" : "1"}
+            currency={displayCurrency}
             style={{ textAlign: "right" }}
           />
         </div>
@@ -875,13 +973,11 @@ function MoneySection({
                   );
                 }
                 return (
-                  <Input
+                  <MoneyInput
                     key={column}
                     value={inputValue(row[column] ?? 0, displayCurrency, exchange)}
                     onChange={(value) => setMoneyItem(section, row.id, column, value)}
-                    type="number"
-                    min="0"
-                    step={displayCurrency === USD ? "0.01" : "1"}
+                    currency={displayCurrency}
                     style={{ textAlign: "right" }}
                   />
                 );
