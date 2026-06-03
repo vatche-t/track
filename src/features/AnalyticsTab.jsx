@@ -1,20 +1,23 @@
 import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { BarChart3, BrainCircuit, Send, TrendingUp, Wallet } from "lucide-react";
-import { Button, Card, ChartTip, Pill, SectionTitle, Stat } from "../components/ui";
+import { BarChart3, BrainCircuit, Send, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { Button, Card, ChartTip, Input, Pill, SectionTitle, Stat } from "../components/ui";
 import { C, CHART_COLORS, STATUSES, STATUS_COLOR } from "../core/constants";
 import {
   addDays,
@@ -26,9 +29,11 @@ import {
 } from "../core/date";
 import {
   AMD,
+  amd,
   displayMoney,
   expenseAmountAMD,
   financeTotals,
+  monthlySeries,
   normalizeFinance,
   savingsPlan,
 } from "../core/finance";
@@ -215,6 +220,8 @@ export function FinanceAnalyticsPanel({ finance }) {
       </div>
       <FinanceAiAnalyst finance={financeModel} totals={totals} exchange={financeModel.exchange} />
       <div className="finance-analytics-grid">
+        <MonthlyTrendPanel finance={financeModel} />
+        <WhatIfPanel finance={financeModel} totals={totals} exchange={financeModel.exchange} />
         <CashFlowNarrative data={cashFlowData} totals={totals} exchange={financeModel.exchange} />
         <SpendCategoryBoard categories={categoryData} exchange={financeModel.exchange} />
         <BudgetVarianceBoard rows={budgetData} exchange={financeModel.exchange} />
@@ -222,6 +229,97 @@ export function FinanceAnalyticsPanel({ finance }) {
         <RunwayPanel data={runwayData} totals={totals} exchange={financeModel.exchange} />
       </div>
     </div>
+  );
+}
+
+// Phase 5: spend / net / income across recent months.
+function MonthlyTrendPanel({ finance }) {
+  const data = useMemo(() => monthlySeries(finance, 6), [finance]);
+  const hasHistory = data.length > 1;
+  return (
+    <Card className="finance-panel finance-panel-wide">
+      <div className="finance-panel-head">
+        <div>
+          <span className="eyebrow">month over month</span>
+          <h3>Spending & net trend</h3>
+        </div>
+        <Pill color={C.blue}>{data.length} mo</Pill>
+      </div>
+      {hasHistory ? (
+        <ResponsiveContainer width="100%" height={210}>
+          <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <defs>
+              <linearGradient id="trendSpent" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={C.red} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={C.red} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 4" vertical={false} />
+            <XAxis dataKey="label" tick={{ fill: C.muted, fontSize: 11, fontWeight: 700 }} axisLine={{ stroke: C.border }} tickLine={false} />
+            <YAxis width={44} tick={{ fill: C.muted, fontSize: 10, fontWeight: 700 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+            <Tooltip content={({ active, payload, label }) => (active && payload?.length ? (
+              <div className="chart-tip"><b>{label}</b>{payload.map((p) => (<div key={p.name} style={{ color: p.color }}>{p.name}: {amd(p.value)}</div>))}</div>
+            ) : null)} />
+            <Area name="Spent" dataKey="spent" stroke={C.red} strokeWidth={2.4} fill="url(#trendSpent)" isAnimationActive animationDuration={650} />
+            <Line name="Income" dataKey="income" stroke={C.muted} strokeWidth={1.6} strokeDasharray="5 5" dot={false} isAnimationActive animationDuration={650} />
+            <Line name="Net" dataKey="net" stroke={C.green} strokeWidth={3} dot={{ r: 3 }} isAnimationActive animationDuration={750} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="empty-inline">Trends appear once you have more than one month of data. Keep logging — next month this fills in.</div>
+      )}
+    </Card>
+  );
+}
+
+// Phase 5: cut a discretionary amount per month → see a goal funded sooner.
+function WhatIfPanel({ finance, totals, exchange }) {
+  const [cut, setCut] = useState(20000);
+  const funds = savingsPlan(finance).filter((f) => f.remaining > 0);
+  const [fundId, setFundId] = useState(funds[0]?.id || "");
+  const fund = funds.find((f) => f.id === fundId) || funds[0];
+
+  const baseMonthly = fund ? ((finance.contributions?.[fund.id] ?? +fund.monthly) || 0) : 0;
+  const newMonthly = baseMonthly + (+cut || 0);
+  const monthsBase = baseMonthly > 0 ? Math.ceil(fund.remaining / baseMonthly) : Infinity;
+  const monthsNew = newMonthly > 0 ? Math.ceil(fund.remaining / newMonthly) : Infinity;
+  const sooner = Number.isFinite(monthsBase) && Number.isFinite(monthsNew) ? monthsBase - monthsNew : null;
+
+  return (
+    <Card className="finance-panel">
+      <div className="finance-panel-head">
+        <div>
+          <span className="eyebrow">what if</span>
+          <h3>Trade-off simulator</h3>
+        </div>
+        <Sparkles size={18} color={C.amber} />
+      </div>
+      {fund ? (
+        <div className="whatif-body">
+          <div className="whatif-controls">
+            <label>
+              <span>Cut per month (AMD)</span>
+              <Input value={String(cut)} onChange={(v) => setCut(+String(v).replace(/[^\d]/g, "") || 0)} />
+            </label>
+            <label>
+              <span>Move it to</span>
+              <Input value={fund.name} onChange={(name) => { const f = funds.find((x) => x.name === name); if (f) setFundId(f.id); }} options={funds.map((f) => f.name)} />
+            </label>
+          </div>
+          <div className="whatif-result">
+            <p>
+              Adding <b>{displayMoney(cut, AMD, exchange)}</b>/mo to <b>{fund.name}</b> changes its funding from{" "}
+              <b>{Number.isFinite(monthsBase) ? `${monthsBase} mo` : "never"}</b> to{" "}
+              <b style={{ color: C.green }}>{Number.isFinite(monthsNew) ? `${monthsNew} mo` : "never"}</b>
+              {sooner != null && sooner > 0 ? <> — <b style={{ color: C.green }}>{sooner} months sooner</b>.</> : "."}
+            </p>
+            <small>Tip: that {displayMoney(cut, AMD, exchange)} could come from your wants ({displayMoney(totals.discretionarySpent, AMD, exchange)} this month).</small>
+          </div>
+        </div>
+      ) : (
+        <div className="empty-inline">Add a savings goal with a remaining gap to simulate trade-offs.</div>
+      )}
+    </Card>
   );
 }
 
