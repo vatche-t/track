@@ -84,7 +84,45 @@ Now write the check-in for the DATA above.`,
   }], { maxTokens: 220, temperature: 0.2 });
 }
 
-export async function getFinancialAdvice({ totals, savings, goals, exchange, expenses }) {
+// Renders a recent-months trend block for prompts. Empty string when <2 months.
+function trendBlock(series = []) {
+  if (!Array.isArray(series) || series.length < 2) return "";
+  const lines = series
+    .map(
+      (m) =>
+        `  - ${m.label}: spent ${Math.round(m.spent).toLocaleString()} AMD, net ${Math.round(m.net).toLocaleString()}, wants ${Math.round(m.discretionary).toLocaleString()}`,
+    )
+    .join("\n");
+  return `\n\nRECENT MONTHS (oldest→newest):\n${lines}`;
+}
+
+export async function getSpendNudge({ spentToday, safeDaily, overBy, note, categoryName, exchange }) {
+  return chat([{
+    role: "user",
+    content: `The user just logged "${note}" (${categoryName}). All AMD.
+- Spent today: ${Math.round(spentToday).toLocaleString()}
+- Safe daily spend left: ${Math.round(safeDaily).toLocaleString()}
+- Over by: ${Math.round(overBy).toLocaleString()}
+
+Write ONE friendly sentence (max 25 words): note they're over today's safe pace and one light, practical suggestion. No shaming, no greeting.`,
+  }], { maxTokens: 160, temperature: 0.3 });
+}
+
+export async function explainWaterfall({ suggestion = [], savings = [], exchange }) {
+  const goals = suggestion.filter((s) => s.kind === "goal");
+  const order = goals
+    .map((g, i) => `  ${i + 1}. ${g.name}: ${Math.round(+g.amount || 0).toLocaleString()} AMD (${g.progress ?? 0}% funded)`)
+    .join("\n") || "  None";
+  return chat([{
+    role: "user",
+    content: `This is the user's goal-funding order (a waterfall — each goal is filled before the next):
+${order}
+
+Explain in 2-3 short sentences WHY this order makes sense: stability/emergency first, then time-sensitive needs (relocation), then long-term wealth (house, investing). Reference the actual goal names. No preamble.`,
+  }], { maxTokens: 320, temperature: 0.25 });
+}
+
+export async function getFinancialAdvice({ totals, savings, goals, exchange, expenses, series }) {
   const income = totals.income;
   const totalExpenses = totals.expenses;
   const net = income - totalExpenses;
@@ -129,9 +167,10 @@ Life goals:
 ${goalLines || "  None set"}
 
 Top spending categories this month:
-${topCategories || "  No logged expenses yet"}
+${topCategories || "  No logged expenses yet"}${trendBlock(series)}
 
 QUALITY RULES:
+- If RECENT MONTHS is present, call out the clearest multi-month trend (a category or net rising/falling) before single-month tips.
 - Rank by AMD impact; ignore tiny expenses, lead with the biggest lever.
 - If income is 0 AMD, treat it as missing data (not "no income") and ask for it first.
 - This app already tracks expenses — never suggest spreadsheets, notebooks, or "track your spending".
@@ -229,7 +268,7 @@ Answer in 3 sentences max.`,
   }], { maxTokens: 250, temperature: 0.3 });
 }
 
-export async function askFinanceAnalyticsQuestion(question, { finance, totals, exchange }) {
+export async function askFinanceAnalyticsQuestion(question, { finance, totals, exchange, series }) {
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
   const rate = Math.round(exchange?.rate || 390);
@@ -280,7 +319,7 @@ Fixed rows - ${fixedLines}
 Variable rows - ${variableLines}
 Savings funds - ${fundLines}
 Spend by category this month - ${categoryLines}
-Recent expenses - ${recentExpenses}
+Recent expenses - ${recentExpenses}${trendBlock(series)}
 
 QUESTION: ${question}
 

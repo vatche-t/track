@@ -314,6 +314,7 @@ const normalizeAi = (ai = {}) => ({
   forecast: ai.forecast ?? null,
   advice: ai.advice ?? null,
   split: ai.split ?? null,
+  waterfall: ai.waterfall ?? null,
   generatedAt: ai.generatedAt && typeof ai.generatedAt === "object" ? ai.generatedAt : {},
 });
 
@@ -444,6 +445,31 @@ export const netWorthSummary = (finance) => {
   const assets = fundsSaved + sinkingSaved + heldCash;
   const debt = sum(model.debts, "balance");
   return { assets, debt, net: assets - debt, fundsSaved, sinkingSaved, heldCash };
+};
+
+// Proactive nudge: is today's logged spend already past the adaptive safe daily?
+// safeDaily spreads the remaining cap across the days left in the month.
+export const spendNudge = (finance, spendingCap, monthKeyArg) => {
+  const model = finance.months ? finance : normalizeFinance(finance);
+  const key = monthKeyArg || monthKey();
+  const today = localDate();
+  const d = new Date();
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const daysRemaining = Math.max(1, daysInMonth - d.getDate() + 1);
+
+  let spentToday = 0;
+  let spentBeforeToday = 0;
+  model.expenses
+    .filter((e) => (e.date || "").startsWith(key))
+    .forEach((e) => {
+      const amt = expenseAmountAMD(e, model.exchange);
+      if (e.date === today) spentToday += amt;
+      else spentBeforeToday += amt;
+    });
+
+  const safeDaily = Math.max(0, Math.round((spendingCap - spentBeforeToday) / daysRemaining));
+  const over = safeDaily > 0 && spentToday > safeDaily;
+  return { over, spentToday, safeDaily, overBy: Math.max(0, spentToday - safeDaily) };
 };
 
 // Per-month series for trend charts: spent / net / income across recent months.

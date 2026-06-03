@@ -33,7 +33,14 @@ import {
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
 import { Modal } from "../components/Modal";
 import { FinanceAnalyticsPanel } from "./AnalyticsTab";
-import { GROQ_MODEL, getFinancialAdvice, getSpendingForecast, refineRecommendedSplit } from "../core/groq";
+import {
+  GROQ_MODEL,
+  explainWaterfall,
+  getFinancialAdvice,
+  getSpendNudge,
+  getSpendingForecast,
+  refineRecommendedSplit,
+} from "../core/groq";
 import { C } from "../core/constants";
 import { localDate, monthKey, submitOnEnter, sum, uid } from "../core/date";
 import {
@@ -51,7 +58,9 @@ import {
   fetchUsdAmdRate,
   financeTotals,
   getMonth,
+  monthlySeries,
   netWorthSummary,
+  spendNudge,
   formatMoney,
   fromAMD,
   fundSuggestion,
@@ -166,6 +175,7 @@ export function FinanceTab({ finance, setFinance }) {
     kind: "expense",
   });
   const [newCategory, setNewCategory] = useState("");
+  const [nudge, setNudge] = useState(null);
   const detected = detectExpenseCategory(draft.note);
   const categoryOptions = categories.map((category) => category.name);
   const salary = sum(model.income, "actual");
@@ -356,8 +366,9 @@ export function FinanceTab({ finance, setFinance }) {
     // reduces Spent and the category's actual.
     const magnitude = +draft.amount || 0;
     const signedAmount = draft.kind === "in" ? -magnitude : magnitude;
-    updateFinance((previous) => ({
-      ...previous,
+    const isExpense = draft.kind !== "in" && (draft.date || localDate()) === localDate();
+    const nextFinance = {
+      ...model,
       expenses: [
         createExpense(
           {
@@ -366,11 +377,12 @@ export function FinanceTab({ finance, setFinance }) {
             categoryId: category.id,
             categoryName: category.name,
           },
-          previous.exchange,
+          model.exchange,
         ),
-        ...previous.expenses,
+        ...model.expenses,
       ],
-    }));
+    };
+    setFinance(nextFinance);
     setDraft({
       date: localDate(),
       note: "",
@@ -380,6 +392,27 @@ export function FinanceTab({ finance, setFinance }) {
       source: "Spending card",
       kind: "expense",
     });
+
+    // Proactive nudge: instant deterministic check, then enrich with one AI line.
+    if (isExpense) {
+      const n = spendNudge(nextFinance, spendingCap);
+      if (n.over) {
+        setNudge({
+          text: `That puts today at ${amd(n.spentToday)} — over your safe daily of ${amd(n.safeDaily)} by ${amd(n.overBy)}.`,
+          ai: "",
+        });
+        getSpendNudge({
+          spentToday: n.spentToday,
+          safeDaily: n.safeDaily,
+          overBy: n.overBy,
+          note: draft.note,
+          categoryName: category.name,
+          exchange: model.exchange,
+        })
+          .then((ai) => setNudge((cur) => (cur ? { ...cur, ai } : cur)))
+          .catch(() => {});
+      }
+    }
   };
 
   const deleteExpense = (id) =>
@@ -639,6 +672,12 @@ export function FinanceTab({ finance, setFinance }) {
               </Pill>
             </div>
           </div>
+          {nudge && (
+            <div className="notice notice-warn spend-nudge">
+              <span>⚡ {nudge.text}{nudge.ai ? ` ${nudge.ai}` : ""}</span>
+              <button className="nudge-dismiss" onClick={() => setNudge(null)} title="Dismiss">✕</button>
+            </div>
+          )}
           <div className="expense-form" onKeyDown={submitOnEnter(addExpense)}>
             <Input
               value={draft.date}
@@ -779,8 +818,11 @@ export function FinanceTab({ finance, setFinance }) {
 function RecommendedSplitCard({ income, totals, model, suggestion, applySuggestion, displayCurrency, exchange, setFinance }) {
   const aiText = model.ai?.split || "";
   const aiAt = model.ai?.generatedAt?.split || "";
+  const whyText = model.ai?.waterfall || "";
+  const whyAt = model.ai?.generatedAt?.waterfall || "";
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [whyBusy, setWhyBusy] = useState(false);
   const goalRows = suggestion.filter((item) => item.kind === "goal");
   const reserveRows = suggestion.filter((item) => item.kind === "reserve");
   const unassignedRows = suggestion.filter((item) => item.kind === "unassigned");
@@ -808,6 +850,19 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
     }
   };
 
+  const askWhy = async () => {
+    setWhyBusy(true);
+    setAiError("");
+    try {
+      const text = await explainWaterfall({ suggestion, savings: model.savings, exchange });
+      persistAi(setFinance, "waterfall", text);
+    } catch (error) {
+      setAiError(error.message);
+    } finally {
+      setWhyBusy(false);
+    }
+  };
+
   return (
     <Card className="allocation-card recommended-split-card">
       <div className="card-head split-card-head">
@@ -820,6 +875,9 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
         <div className="split-actions">
           <Button onClick={askAi} disabled={aiBusy}>
             {aiBusy ? "Thinking..." : <><BrainCircuit size={14} /> {aiText ? "Refresh" : "Ask AI"}</>}
+          </Button>
+          <Button onClick={askWhy} disabled={whyBusy} title="Why this funding order?">
+            {whyBusy ? "..." : "Why this order?"}
           </Button>
           <Button variant="primary" onClick={applySuggestion}>
             <ArrowRight size={15} /> Apply
@@ -892,6 +950,14 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
       </div>
 
       {aiError && <div className="rate-error">{aiError}</div>}
+      {whyText && (
+        <div className="split-ai-result why-order">
+          {whyAt && <span className="ai-stamp">Why this order - {timeAgo(whyAt)}</span>}
+          {whyText.split("\n").filter(Boolean).map((line, index) => (
+            <p key={index}>{line}</p>
+          ))}
+        </div>
+      )}
       {aiText && (
         <div className="split-ai-result">
           {aiAt && <span className="ai-stamp">Generated {timeAgo(aiAt)}</span>}
@@ -1181,6 +1247,7 @@ function AiAdviceModal({ open, onClose, totals, model, setFinance }) {
         goals: [],
         exchange: model.exchange,
         expenses: model.expenses,
+        series: monthlySeries(model, 6),
       });
       persistAi(setFinance, "advice", text);
     } catch (e) {

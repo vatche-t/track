@@ -513,7 +513,7 @@ function FinanceAiAnalyst({ finance, totals, exchange }) {
     setErr("");
     setQuestion("");
     try {
-      const text = await askFinanceAnalyticsQuestion(q, { finance, totals, exchange });
+      const text = await askFinanceAnalyticsQuestion(q, { finance, totals, exchange, series: monthlySeries(finance, 6) });
       setHistory((items) => [...items, { q, a: text }]);
     } catch (e) {
       setErr(e.message);

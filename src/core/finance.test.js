@@ -6,7 +6,9 @@ import {
   financeTotals,
   getMonth,
   normalizeFinance,
+  spendNudge,
 } from "./finance.js";
+import { localDate, monthKey } from "./date.js";
 
 describe("finance smoke", () => {
   it("normalizes an empty object", () => {
@@ -107,6 +109,36 @@ describe("month model", () => {
     const t = financeTotals(f, "2026-06");
     expect(t.essentialSpent).toBe(90000);
     expect(t.discretionarySpent).toBe(5000);
+  });
+});
+
+describe("spend nudge", () => {
+  it("flags when today's spend exceeds the adaptive safe daily", () => {
+    const today = localDate();
+    const f = normalizeFinance({
+      months: { [monthKey()]: { income: [], fixed: [], variable: [], contributions: {} } },
+      activeMonth: monthKey(),
+      expenses: [
+        { id: "a", date: today, note: "Splurge", amount: 90000, currency: "AMD", amountAMD: 90000, categoryId: "fun", categoryName: "Fun" },
+      ],
+    });
+    // cap 300000 spread over the remaining days; one 90000 day should blow it.
+    const n = spendNudge(f, 300000);
+    expect(n.spentToday).toBe(90000);
+    expect(n.over).toBe(true);
+    expect(n.overBy).toBeGreaterThan(0);
+  });
+
+  it("does not flag a small spend", () => {
+    const today = localDate();
+    const f = normalizeFinance({
+      months: { [monthKey()]: { income: [], fixed: [], variable: [], contributions: {} } },
+      activeMonth: monthKey(),
+      expenses: [
+        { id: "a", date: today, note: "Coffee", amount: 800, currency: "AMD", amountAMD: 800, categoryId: "eating_out", categoryName: "Eating out" },
+      ],
+    });
+    expect(spendNudge(f, 300000).over).toBe(false);
   });
 });
 
