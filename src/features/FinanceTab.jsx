@@ -1439,20 +1439,18 @@ function MoneySection({
                 placeholder="Name"
               />
               {columns.map((column) => {
+                let cell;
                 if (column === "targetDate") {
-                  return (
+                  cell = (
                     <Input
-                      key={column}
                       value={row.targetDate || ""}
                       onChange={(targetDate) => setItem(section, row.id, { targetDate })}
                       type="date"
                     />
                   );
-                }
-                if (column === "suggestedMonthly") {
-                  return (
+                } else if (column === "suggestedMonthly") {
+                  cell = (
                     <Button
-                      key={column}
                       title="Use suggested monthly amount"
                       onClick={() =>
                         setItem(section, row.id, { monthly: fund.suggestedMonthly })
@@ -1461,27 +1459,31 @@ function MoneySection({
                       {displayMoney(fund.suggestedMonthly, displayCurrency, exchange)}
                     </Button>
                   );
-                }
-                if (column === "actual" && derivedActual) {
+                } else if (column === "actual" && derivedActual) {
                   const derived = derivedActual[String(row.name || "").toLowerCase()] || 0;
-                  return (
+                  cell = (
                     <div
-                      key={column}
                       className="fin-actual-derived"
                       title="Auto-filled from logged expenses this month"
                     >
                       {displayMoney(derived, displayCurrency, exchange)}
                     </div>
                   );
+                } else {
+                  cell = (
+                    <MoneyInput
+                      value={inputValue(row[column] ?? 0, displayCurrency, exchange)}
+                      onChange={(value) => setMoneyItem(section, row.id, column, value)}
+                      currency={displayCurrency}
+                      style={{ textAlign: "right" }}
+                    />
+                  );
                 }
                 return (
-                  <MoneyInput
-                    key={column}
-                    value={inputValue(row[column] ?? 0, displayCurrency, exchange)}
-                    onChange={(value) => setMoneyItem(section, row.id, column, value)}
-                    currency={displayCurrency}
-                    style={{ textAlign: "right" }}
-                  />
+                  <div className="fin-cell" key={column}>
+                    <span className="fin-cell-label">{COL_LABEL[column]}</span>
+                    {cell}
+                  </div>
                 );
               })}
               {onLog && (
