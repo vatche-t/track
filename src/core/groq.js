@@ -114,11 +114,13 @@ export async function getFinancialAdvice({ totals, savings, goals, exchange, exp
   const prompt = `You are a personal finance advisor for someone living in Yerevan, Armenia. All amounts are in AMD (Armenian Dram). Current rate: 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
 
 Current month snapshot:
-- Income: ${income.toLocaleString()} AMD
-- Total expenses: ${totalExpenses.toLocaleString()} AMD
-- Net after expenses: ${net.toLocaleString()} AMD
-- Monthly savings goal: ${totals.monthlyGoal.toLocaleString()} AMD (${savingsRate}% savings rate)
-- Remaining after plan: ${totals.leftAfterPlan.toLocaleString()} AMD
+- Income received this month: ${income.toLocaleString()} AMD
+- Planned monthly income (full month): ${(+totals.incomePlan || income).toLocaleString()} AMD
+- Spent this month: ${totalExpenses.toLocaleString()} AMD
+- Net this month (received − spent): ${net.toLocaleString()} AMD  ← this is real cash; a negative net is NOT debt unless income data is missing
+- Monthly savings plan: ${totals.monthlyGoal.toLocaleString()} AMD (${savingsRate}% of income)
+- Monthly plan balance (planned income − planned costs − savings): ${totals.planBalance?.toLocaleString?.() ?? totals.leftAfterPlan.toLocaleString()} AMD  ← if negative, the savings plan is over-committed for a full month, not a debt
+- Available to move to savings this month: ${(+totals.availableToSave || Math.max(0, net)).toLocaleString()} AMD
 
 Savings funds:
 ${fundLines || "  None set"}

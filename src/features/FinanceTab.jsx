@@ -37,8 +37,10 @@ import {
   allocationSuggestion,
   amd,
   createExpense,
+  currentMonthExpenses,
   detectExpenseCategory,
   displayMoney,
+  expenseAmountAMD,
   fetchUsdAmdRate,
   financeTotals,
   formatMoney,
@@ -152,6 +154,7 @@ export function FinanceTab({ finance, setFinance }) {
     currency: AMD,
     categoryName: "Other",
     source: "Spending card",
+    kind: "expense",
   });
   const [newCategory, setNewCategory] = useState("");
   const detected = detectExpenseCategory(draft.note);
@@ -159,8 +162,19 @@ export function FinanceTab({ finance, setFinance }) {
   const salary = sum(model.income, "actual");
   const suggestion = allocationSuggestion(salary, model.savings);
   const spendingCap = suggestion[0]?.amount || 300000;
-  const loggedThisMonth = totals.fixed + totals.variableManual + totals.loggedExpenses;
+  const loggedThisMonth = totals.spent;
   const capPct = Math.min(100, Math.round((loggedThisMonth / spendingCap) * 100));
+
+  // Per-category actual spend this month, derived from logged expenses. This is the
+  // single source of truth that fills the Setup "Actual" columns (read-only).
+  const spentByCategory = useMemo(() => {
+    const map = {};
+    currentMonthExpenses(model).forEach((expense) => {
+      const key = String(expense.categoryName || "").toLowerCase();
+      map[key] = (map[key] || 0) + expenseAmountAMD(expense, exchange);
+    });
+    return map;
+  }, [model, exchange]);
 
   const updateFinance = (recipe) =>
     setFinance((previous) => recipe(normalizeFinance(previous)));
@@ -227,12 +241,17 @@ export function FinanceTab({ finance, setFinance }) {
     if (!draft.note.trim() || !(+draft.amount > 0)) return;
     const category =
       categories.find((item) => item.name === draft.categoryName) || detected;
+    // "Money in" (reimbursement / refund) is stored as a negative amount so it
+    // reduces Spent and the category's actual.
+    const magnitude = +draft.amount || 0;
+    const signedAmount = draft.kind === "in" ? -magnitude : magnitude;
     updateFinance((previous) => ({
       ...previous,
       expenses: [
         createExpense(
           {
             ...draft,
+            amount: signedAmount,
             categoryId: category.id,
             categoryName: category.name,
           },
@@ -248,6 +267,7 @@ export function FinanceTab({ finance, setFinance }) {
       currency: draft.currency,
       categoryName: "Other",
       source: "Spending card",
+      kind: "expense",
     });
   };
 
@@ -367,9 +387,14 @@ export function FinanceTab({ finance, setFinance }) {
           <span className="eyebrow">12 month rule</span>
           <h3>Live on 300,000 AMD. Move the rest before spending starts.</h3>
           <p>
-            Current model uses {displayMoney(salary, displayCurrency, exchange)}{" "}
-            income. Expenses can be logged in AMD or USD, then normalized to AMD
-            for planning and analytics.
+            This month you received {displayMoney(totals.income, displayCurrency, exchange)} of your{" "}
+            {displayMoney(totals.incomePlan, displayCurrency, exchange)} planned income. After{" "}
+            {displayMoney(totals.spent, displayCurrency, exchange)} spent, your net is{" "}
+            <b style={{ color: totals.net >= 0 ? C.green : C.red }}>
+              {displayMoney(totals.net, displayCurrency, exchange)}
+            </b>
+            . Savings plan is {displayMoney(totals.monthlyGoal, displayCurrency, exchange)}/mo — you can
+            move about {displayMoney(totals.availableToSave, displayCurrency, exchange)} this month.
           </p>
         </div>
         <div className="cap-meter">
@@ -389,13 +414,14 @@ export function FinanceTab({ finance, setFinance }) {
       </Card>
 
       <div className="stats-grid" style={{ marginBottom: 20 }}>
-        <Stat label="Expenses" value={displayMoney(totals.expenses, displayCurrency, exchange)} color={C.red} />
-        <Stat label="Monthly Goal" value={displayMoney(totals.monthlyGoal, displayCurrency, exchange)} color={C.blue} />
+        <Stat label="Income (this month)" value={displayMoney(totals.income, displayCurrency, exchange)} color={C.green} />
+        <Stat label="Spent" value={displayMoney(totals.spent, displayCurrency, exchange)} color={C.red} />
         <Stat
-          label="After Plan"
-          value={displayMoney(totals.leftAfterPlan, displayCurrency, exchange)}
-          color={totals.leftAfterPlan >= 0 ? C.green : C.red}
+          label="Net this month"
+          value={displayMoney(totals.net, displayCurrency, exchange)}
+          color={totals.net >= 0 ? C.green : C.red}
         />
+        <Stat label="Savings plan / mo" value={displayMoney(totals.monthlyGoal, displayCurrency, exchange)} color={C.blue} />
       </div>
 
       <div className="finance-scope-tabs" aria-label="Finance plan sections">
@@ -421,7 +447,7 @@ export function FinanceTab({ finance, setFinance }) {
         <>
           <div className="finance-overview-grid">
             <SpendingForecastCard
-              spentSoFar={totals.variableManual + totals.loggedExpenses}
+              spentSoFar={totals.spent}
               spendingCap={spendingCap}
               exchange={exchange}
               displayCurrency={displayCurrency}
@@ -447,13 +473,35 @@ export function FinanceTab({ finance, setFinance }) {
           <div className="card-head">
             <div>
               <h3>
-                <ReceiptText size={18} /> Log Expense
+                <ReceiptText size={18} /> {draft.kind === "in" ? "Log Money In" : "Log Expense"}
               </h3>
-              <span>Choose AMD or USD per expense; the live rate is saved with the row.</span>
+              <span>
+                {draft.kind === "in"
+                  ? "Reimbursement / refund — reduces Spent in the chosen category."
+                  : "Choose AMD or USD per expense; the live rate is saved with the row."}
+              </span>
             </div>
-            <Pill color={detected.id === "other" ? C.muted : C.green}>
-              Suggested: {detected.name}
-            </Pill>
+            <div className="expense-head-actions">
+              <div className="segmented expense-kind">
+                <button
+                  type="button"
+                  className={draft.kind !== "in" ? "active" : ""}
+                  onClick={() => setDraft({ ...draft, kind: "expense" })}
+                >
+                  Expense
+                </button>
+                <button
+                  type="button"
+                  className={draft.kind === "in" ? "active" : ""}
+                  onClick={() => setDraft({ ...draft, kind: "in" })}
+                >
+                  Money in
+                </button>
+              </div>
+              <Pill color={detected.id === "other" ? C.muted : C.green}>
+                Suggested: {detected.name}
+              </Pill>
+            </div>
           </div>
           <div className="expense-form" onKeyDown={submitOnEnter(addExpense)}>
             <Input
@@ -533,6 +581,7 @@ export function FinanceTab({ finance, setFinance }) {
           <MoneySection
             title="Fixed Baseline"
             section="fixed"
+            derivedActual={spentByCategory}
             rows={model.fixed}
             columns={["budget", "actual"]}
             displayCurrency={displayCurrency}
@@ -545,6 +594,7 @@ export function FinanceTab({ finance, setFinance }) {
           <MoneySection
             title="Monthly Variable Plan"
             section="variable"
+            derivedActual={spentByCategory}
             rows={model.variable}
             columns={["budget", "actual"]}
             displayCurrency={displayCurrency}
@@ -1110,6 +1160,7 @@ function MoneySection({
   setMoneyItem,
   addItem,
   delItem,
+  derivedActual,
 }) {
   const accent = ACCENT[section];
   const template = ["minmax(0,1.2fr)", ...columns.map(() => "minmax(72px,1fr)"), "32px"].join(" ");
@@ -1188,6 +1239,18 @@ function MoneySection({
                     >
                       {displayMoney(fund.suggestedMonthly, displayCurrency, exchange)}
                     </Button>
+                  );
+                }
+                if (column === "actual" && derivedActual) {
+                  const derived = derivedActual[String(row.name || "").toLowerCase()] || 0;
+                  return (
+                    <div
+                      key={column}
+                      className="fin-actual-derived"
+                      title="Auto-filled from logged expenses this month"
+                    >
+                      {displayMoney(derived, displayCurrency, exchange)}
+                    </div>
                   );
                 }
                 return (

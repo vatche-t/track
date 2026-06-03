@@ -141,11 +141,10 @@ export function FinanceAnalyticsPanel({ finance }) {
   const totals = useMemo(() => financeTotals(financeModel), [financeModel]);
 
   const cashFlowData = useMemo(() => [
-    { name: "Income", Amount: totals.income },
+    { name: "Income (this month)", Amount: totals.income },
     { name: "Fixed", Amount: -totals.fixed },
-    { name: "Variable", Amount: -(totals.variableManual + totals.loggedExpenses) },
-    { name: "Goal Target", Amount: -totals.monthlyGoal },
-    { name: "After Plan", Amount: totals.leftAfterPlan },
+    { name: "Variable", Amount: -totals.variableManual },
+    { name: "Net this month", Amount: totals.net },
   ], [totals]);
 
   const categoryData = useMemo(() => {
@@ -174,13 +173,13 @@ export function FinanceAnalyticsPanel({ finance }) {
     {
       name: "Fixed",
       budget: sum(financeModel.fixed, "budget"),
-      actual: sum(financeModel.fixed, "actual"),
+      actual: totals.fixed,
       direction: "lower",
     },
     {
       name: "Variable",
       budget: sum(financeModel.variable, "budget"),
-      actual: sum(financeModel.variable, "actual") + totals.loggedExpenses,
+      actual: totals.variableManual,
       direction: "lower",
     },
     {
@@ -189,7 +188,7 @@ export function FinanceAnalyticsPanel({ finance }) {
       actual: totals.monthlyGoal,
       direction: "higher",
     },
-  ], [financeModel, totals.loggedExpenses, totals.monthlyGoal]);
+  ], [financeModel, totals]);
 
   const runwayData = useMemo(() => {
     const monthlyOutflow = Math.max(1, totals.expenses + totals.monthlyGoal);
@@ -209,10 +208,10 @@ export function FinanceAnalyticsPanel({ finance }) {
         action={<Pill color={C.blue}>1 USD = {Math.round(financeModel.exchange.rate).toLocaleString()} AMD</Pill>}
       />
       <div className="stats-grid">
-        <Stat label="After Plan" value={displayMoney(totals.leftAfterPlan, AMD, financeModel.exchange)} color={totals.leftAfterPlan >= 0 ? C.green : C.red} />
-        <Stat label="Logged Spend" value={displayMoney(totals.loggedExpenses, AMD, financeModel.exchange)} color={C.amber} />
+        <Stat label="Net this month" value={displayMoney(totals.net, AMD, financeModel.exchange)} color={totals.net >= 0 ? C.green : C.red} />
+        <Stat label="Spent" value={displayMoney(totals.spent, AMD, financeModel.exchange)} color={C.amber} />
         <Stat label="Saved Total" value={displayMoney(totals.saved, AMD, financeModel.exchange)} color={C.blue} />
-        <Stat label="Monthly Goals" value={displayMoney(totals.monthlyGoal, AMD, financeModel.exchange)} color={C.purple} />
+        <Stat label="Plan balance / mo" value={displayMoney(totals.planBalance, AMD, financeModel.exchange)} color={totals.planBalance >= 0 ? C.green : C.red} />
       </div>
       <FinanceAiAnalyst finance={financeModel} totals={totals} exchange={financeModel.exchange} />
       <div className="finance-analytics-grid">
@@ -235,8 +234,8 @@ function CashFlowNarrative({ data, totals, exchange }) {
           <span className="eyebrow">cash flow bridge</span>
           <h3>Where this month’s money goes</h3>
         </div>
-        <strong className={totals.leftAfterPlan >= 0 ? "good" : "bad"}>
-          {displayMoney(totals.leftAfterPlan, AMD, exchange)}
+        <strong className={totals.net >= 0 ? "good" : "bad"}>
+          {displayMoney(totals.net, AMD, exchange)}
         </strong>
       </div>
       <div className="cashflow-ladder">
@@ -261,8 +260,8 @@ function CashFlowNarrative({ data, totals, exchange }) {
       </div>
       <div className="finance-readout">
         <span>Income</span><b>{displayMoney(totals.income, AMD, exchange)}</b>
-        <span>Expenses</span><b>{displayMoney(totals.expenses, AMD, exchange)}</b>
-        <span>Goal transfers</span><b>{displayMoney(totals.monthlyGoal, AMD, exchange)}</b>
+        <span>Spent</span><b>{displayMoney(totals.spent, AMD, exchange)}</b>
+        <span>Net this month</span><b>{displayMoney(totals.net, AMD, exchange)}</b>
       </div>
     </Card>
   );

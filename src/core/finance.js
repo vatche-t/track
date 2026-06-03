@@ -340,33 +340,67 @@ export const currentMonthExpenses = (finance) =>
     (expense.date || "").startsWith(monthKey()),
   );
 
+// Single source of truth = logged expenses. Two lenses:
+//   - This month (actual): income.actual − spent (logged this month; reimbursements
+//     are negative). Yields the real net cash position — never fake debt.
+//   - Monthly plan (budget): income.budget − planned fixed/variable/savings.
+// fixed/variableManual are now the breakdown of `spent` by category type (not the
+// old Setup "actual" columns), so they always sum back to `spent`.
 export const financeTotals = (finance) => {
   const normalized = normalizeFinance(finance);
   const income = sum(normalized.income, "actual");
-  const fixed = sum(normalized.fixed, "actual");
-  const variableManual = sum(normalized.variable, "actual");
-  const loggedExpenses = currentMonthExpenses(normalized).reduce(
-    (total, expense) => total + expenseAmountAMD(expense, normalized.exchange),
-    0,
+  const incomePlan = sum(normalized.income, "budget");
+  const fixedPlan = sum(normalized.fixed, "budget");
+  const variablePlan = sum(normalized.variable, "budget");
+
+  const typeById = new Map(normalized.categories.map((c) => [c.id, c.type]));
+  const typeByName = new Map(
+    normalized.categories.map((c) => [String(c.name).toLowerCase(), c.type]),
   );
+  let spent = 0;
+  let fixedSpent = 0;
+  currentMonthExpenses(normalized).forEach((expense) => {
+    const amount = expenseAmountAMD(expense, normalized.exchange);
+    spent += amount;
+    const type =
+      typeById.get(expense.categoryId) ||
+      typeByName.get(String(expense.categoryName || "").toLowerCase());
+    if (type === "fixed") fixedSpent += amount;
+  });
+  const variableSpent = spent - fixedSpent;
+
   const saved = sum(normalized.savings, "saved");
   const monthlyGoal = normalized.savings.reduce(
     (total, fund) => total + (+fund.monthly || 0),
     0,
   );
-  const expenses = fixed + variableManual + loggedExpenses;
-  const leftAfterPlan = income - expenses - monthlyGoal;
+
+  const net = income - spent;
+  const availableToSave = Math.max(0, net);
+  const planBalance = incomePlan - fixedPlan - variablePlan - monthlyGoal;
 
   return {
+    // this month (actual)
     income,
-    fixed,
-    variableManual,
-    loggedExpenses,
-    expenses,
-    saved,
+    spent,
+    net,
+    netThisMonth: net,
+    availableToSave,
+    fixed: fixedSpent,
+    variableManual: variableSpent,
+    // monthly plan (budget)
+    incomePlan,
+    fixedPlan,
+    variablePlan,
+    planBalance,
+    // savings
     monthlyGoal,
-    net: income - expenses - saved,
-    leftAfterPlan,
+    savingsPlan: monthlyGoal,
+    saved,
+    // compatibility aliases (consumers expect these names)
+    expenses: spent,
+    loggedExpenses: spent,
+    leftAfterPlan: planBalance,
   };
 };
 
