@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Target, Trash2 } from "lucide-react";
+import { Plus, Sparkles, Target, Trash2 } from "lucide-react";
 import { Button, Card, CardGrid, Input, Pill, SectionTitle } from "../components/ui";
 import { PRIORITIES, PRIORITY_COLOR } from "../core/constants";
 import { localDate, submitOnEnter, uid } from "../core/date";
+import { breakdownGoal } from "../core/groq";
 
-export function GoalsTab({ goals, setGoals }) {
+export function GoalsTab({ goals, setGoals, setTasks }) {
+  const [busyGoal, setBusyGoal] = useState("");
+  const [breakdownFor, setBreakdownFor] = useState(null);
   const [draft, setDraft] = useState({
     title: "",
     category: "Career",
@@ -33,6 +36,43 @@ export function GoalsTab({ goals, setGoals }) {
     setGoals(
       goals.map((goal) => (goal.id === id ? { ...goal, ...patch } : goal)),
     );
+
+  // AI: break a goal into concrete tasks, create them dated today, linked to the goal.
+  const breakInto = async (goal) => {
+    setBusyGoal(goal.id);
+    setBreakdownFor(null);
+    try {
+      const text = await breakdownGoal({ goal });
+      const titles = text
+        .split("\n")
+        .map((line) => line.replace(/^[\s\d.\-*)]+/, "").trim())
+        .filter((line) => line.length > 2)
+        .slice(0, 5);
+      if (!titles.length) return;
+      const newTasks = titles.map((title, i) => ({
+        id: uid(),
+        order: Date.now() + i,
+        date: localDate(),
+        title,
+        category: goal.category || "Personal",
+        priority: "Medium",
+        status: "To Do",
+        est: 30,
+        actual: 0,
+        recurring: false,
+        notes: "",
+        subtasks: [],
+        goalId: goal.id,
+      }));
+      setTasks((prev) => [...newTasks, ...prev]);
+      setBreakdownFor({ id: goal.id, count: titles.length });
+    } catch {
+      setBreakdownFor({ id: goal.id, error: true });
+    } finally {
+      setBusyGoal("");
+    }
+  };
+
   return (
     <div>
       <SectionTitle title="Goals" icon={<Target />} />
@@ -110,6 +150,18 @@ export function GoalsTab({ goals, setGoals }) {
               >
                 <Trash2 size={16} />
               </button>
+            </div>
+            <div className="goal-ai">
+              <Button onClick={() => breakInto(goal)} disabled={busyGoal === goal.id}>
+                {busyGoal === goal.id ? "Thinking..." : <><Sparkles size={14} /> Break into tasks</>}
+              </Button>
+              {breakdownFor?.id === goal.id && (
+                <span className={breakdownFor.error ? "goal-ai-msg err" : "goal-ai-msg"}>
+                  {breakdownFor.error
+                    ? "Couldn't generate tasks — try again."
+                    : `Added ${breakdownFor.count} tasks to Today, linked to this goal.`}
+                </span>
+              )}
             </div>
           </Card>
         ))}

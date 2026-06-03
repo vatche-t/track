@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ClipboardList, Star, Trash2 } from "lucide-react";
+import { Check, ClipboardList, Sparkles, Star, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -18,6 +18,7 @@ import {
   uid,
 } from "../core/date";
 import { amd, financeTotals, normalizeFinance } from "../core/finance";
+import { getWeeklyReviewSummary } from "../core/groq";
 
 const REVIEW_FIELDS = [
   ["wins", "Wins", "What moved forward?"],
@@ -71,6 +72,22 @@ export function WeeklyReviewTab({
       },
   );
   const stats = getWeekStats(draft.week, tasks, habits, goals, finance);
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const aiReview = async () => {
+    setAiBusy(true);
+    setAiSummary("");
+    try {
+      const days = new Set(dateRange(draft.week));
+      const weekTasks = tasks.filter((task) => days.has(task.date));
+      const text = await getWeeklyReviewSummary({ weekTasks, habits, goals });
+      setAiSummary(text);
+    } catch {
+      setAiSummary("Could not generate a summary right now.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
   useEffect(() => {
     const match = reviews.find((review) => review.week === draft.week);
     setDraft(
@@ -109,9 +126,14 @@ export function WeeklyReviewTab({
         title="Weekly Review"
         icon={<ClipboardList />}
         action={
-          <Button variant="primary" onClick={save}>
-            <Check size={16} /> Save Review
-          </Button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button onClick={aiReview} disabled={aiBusy}>
+              {aiBusy ? "Thinking..." : <><Sparkles size={16} /> AI summary</>}
+            </Button>
+            <Button variant="primary" onClick={save}>
+              <Check size={16} /> Save Review
+            </Button>
+          </div>
         }
       />
       <Card className="review-editor">
@@ -155,6 +177,20 @@ export function WeeklyReviewTab({
             color={stats.netFinance >= 0 ? C.green : C.red}
           />
         </div>
+        {aiSummary && (
+          <div className="review-ai">
+            <span><Sparkles size={13} /> AI coach summary</span>
+            <p>{aiSummary}</p>
+            <Button
+              style={{ marginTop: 10 }}
+              onClick={() =>
+                setDraft((d) => ({ ...d, lessons: d.lessons ? `${d.lessons}\n${aiSummary}` : aiSummary }))
+              }
+            >
+              Add to Lessons
+            </Button>
+          </div>
+        )}
         <div className="review-grid">
           {REVIEW_FIELDS.map(([key, label, placeholder]) => (
             <div key={key}>

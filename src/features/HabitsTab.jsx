@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Check, Flame, Plus, Trash2 } from "lucide-react";
+import { Check, Flame, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Button, Card, Input, MotionCheck, SectionTitle } from "../components/ui";
+import { C } from "../core/constants";
 import {
   dateRange,
   dayName,
@@ -11,10 +12,30 @@ import {
   submitOnEnter,
   uid,
 } from "../core/date";
+import { getHabitNudge } from "../core/groq";
 
 export function HabitsTab({ habits, setHabits }) {
   const [name, setName] = useState("");
+  const [nudges, setNudges] = useState({});
+  const [nudgeBusy, setNudgeBusy] = useState("");
   const week = dateRange(startOfWeekISO());
+
+  // Habits the user has done before but whose streak is currently 0.
+  const slipping = habits.filter(
+    (h) => habitStreak(h) === 0 && Object.values(h.log || {}).some(Boolean),
+  );
+  const nudge = async (habit) => {
+    setNudgeBusy(habit.id);
+    try {
+      const missedDays = week.filter((d) => !habit.log?.[d]).length;
+      const text = await getHabitNudge({ habit, streak: 0, missedDays });
+      setNudges((n) => ({ ...n, [habit.id]: text }));
+    } catch {
+      setNudges((n) => ({ ...n, [habit.id]: "Pick the smallest version of this habit and do it once today." }));
+    } finally {
+      setNudgeBusy("");
+    }
+  };
   const add = () => {
     if (!name.trim()) return;
     setHabits([...habits, { id: uid(), name, target: 7, log: {} }]);
@@ -60,6 +81,26 @@ export function HabitsTab({ habits, setHabits }) {
           ))}
         </div>
       </Card>
+      {slipping.length > 0 && (
+        <Card>
+          <div className="card-head">
+            <h3><Sparkles size={18} color={C.purple} /> Restart a habit</h3>
+          </div>
+          <div className="stack">
+            {slipping.map((habit) => (
+              <div key={habit.id}>
+                <div className="today-task" style={{ gridTemplateColumns: "1fr auto" }}>
+                  <strong>{habit.name} — streak broken</strong>
+                  <Button onClick={() => nudge(habit)} disabled={nudgeBusy === habit.id}>
+                    {nudgeBusy === habit.id ? "..." : <><Sparkles size={14} /> Nudge me</>}
+                  </Button>
+                </div>
+                {nudges[habit.id] && <div className="habit-nudge">{nudges[habit.id]}</div>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

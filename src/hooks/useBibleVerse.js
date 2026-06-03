@@ -27,16 +27,15 @@ export function useBibleVerse() {
       return;
     }
     let cancelled = false;
-    fetch("https://labs.bible.org/api/?passage=votd&type=json&formatting=plain")
-      .then((response) => response.json())
+    // Go through our own serverless proxy (/api/verse) to avoid the browser CORS
+    // block when calling labs.bible.org directly from the HTTPS site.
+    fetch("/api/verse")
+      .then((response) => (response.ok ? response.json() : Promise.reject(response)))
       .then((data) => {
-        const item = Array.isArray(data) ? data[0] : data;
+        if (data?.error || !data?.text) return Promise.reject(data);
         const next = {
-          text: cleanVerseText(item?.text || fallbackVerse.text),
-          reference:
-            item?.display_ref ||
-            `${item?.bookname || ""} ${item?.chapter || ""}:${item?.verse || ""}`.trim() ||
-            fallbackVerse.reference,
+          text: cleanVerseText(data.text || fallbackVerse.text),
+          reference: data.reference || fallbackVerse.reference,
         };
         localStorage.setItem(cacheKey, JSON.stringify(next));
         localStorage.setItem("pt_bible_last", JSON.stringify(next));

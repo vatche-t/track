@@ -334,6 +334,73 @@ Answer in 4 concise bullets maximum.`,
   }], { maxTokens: 700, temperature: 0.25 });
 }
 
+export async function getDailyPlan({ tasks = [], overdue = [], goals = [], date }) {
+  const taskLines = tasks
+    .map((t) => `  - ${t.title} [${t.priority || "Medium"}, ${t.status}${t.goalTitle ? `, goal: ${t.goalTitle}` : ""}]`)
+    .join("\n") || "  (none scheduled)";
+  const overdueLines = overdue.map((t) => `  - ${t.title} (was due ${t.date})`).join("\n") || "  (none)";
+  const goalLines = goals.map((g) => `  - ${g.title} (${g.progress ?? 0}%)`).join("\n") || "  (none)";
+  return chat([{
+    role: "user",
+    content: `Today is ${date}. Pick the user's TOP 3 most important tasks for today from the lists below — do not invent tasks.
+
+TODAY'S TASKS:
+${taskLines}
+
+OVERDUE:
+${overdueLines}
+
+ACTIVE GOALS:
+${goalLines}
+
+Choose 3 that best move goals forward / clear urgent overdue items. Output exactly 3 lines, format "N. Exact task title — why it matters today (≤12 words)". Use titles verbatim from the lists.`,
+  }], { maxTokens: 400, temperature: 0.3 });
+}
+
+export async function getWeeklyReviewSummary({ weekTasks = [], habits = [], goals = [] }) {
+  const done = weekTasks.filter((t) => t.status === "Done").length;
+  const byDayDone = {};
+  weekTasks.forEach((t) => {
+    if (t.status === "Done") byDayDone[t.date] = (byDayDone[t.date] || 0) + 1;
+  });
+  const habitLines = habits
+    .map((h) => `  - ${h.name}: ${Object.values(h.log || {}).filter(Boolean).length} days logged`)
+    .join("\n") || "  (none)";
+  const goalLines = goals.map((g) => `  - ${g.title} (${g.progress ?? 0}%)`).join("\n") || "  (none)";
+  return chat([{
+    role: "user",
+    content: `Summarize the user's week as a supportive productivity coach.
+
+TASKS: ${weekTasks.length} total, ${done} done.
+HABITS:
+${habitLines}
+GOALS:
+${goalLines}
+
+Write 3-4 sentences: what went well, one clear pattern (e.g. consistency or a recurring slip), and ONE concrete adjustment for next week. No preamble, no lists.`,
+  }], { maxTokens: 420, temperature: 0.3 });
+}
+
+export async function breakdownGoal({ goal }) {
+  return chat([{
+    role: "user",
+    content: `Break this goal into concrete, schedulable next tasks.
+
+GOAL: "${goal.title}" (category: ${goal.category || "n/a"}, ${goal.progress ?? 0}% done, target ${goal.target || "none"}).
+
+Output 3-5 lines, each a SHORT actionable task title (≤8 words, start with a verb). One per line, no numbering, no extra text.`,
+  }], { maxTokens: 300, temperature: 0.4 });
+}
+
+export async function getHabitNudge({ habit, streak = 0, missedDays = 0 }) {
+  return chat([{
+    role: "user",
+    content: `The user has a habit "${habit.name}". Current streak: ${streak} days. Missed roughly ${missedDays} of the last 7 days.
+
+Write ONE encouraging sentence (≤25 words) to restart it today, plus a tiny habit-stacking tip (attach it to an existing routine). No shaming, no greeting.`,
+  }], { maxTokens: 160, temperature: 0.4 });
+}
+
 export async function getGoalAdvice({ goal, totals, exchange }) {
   const prompt = `Personal finance advisor for Yerevan, Armenia. 1 USD = ${Math.round(exchange?.rate || 390)} AMD.
 

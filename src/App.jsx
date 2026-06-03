@@ -196,6 +196,7 @@ export default function App() {
                     setTasks={setTasks}
                     habits={habits}
                     setHabits={setHabits}
+                    goals={goals}
                     setTab={setTab}
                     startFocus={startFocus}
                   />
@@ -212,7 +213,9 @@ export default function App() {
                 {tab === "routines" && (
                   <RoutinesTab routines={routines} setRoutines={setRoutines} />
                 )}
-                {tab === "goals" && <GoalsTab goals={goals} setGoals={setGoals} />}
+                {tab === "goals" && (
+                  <GoalsTab goals={goals} setGoals={setGoals} setTasks={setTasks} />
+                )}
                 {tab === "habits" && (
                   <HabitsTab habits={habits} setHabits={setHabits} />
                 )}

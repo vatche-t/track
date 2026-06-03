@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, CalendarDays, Check, Play, Plus } from "lucide-react";
+import { BookOpen, CalendarDays, Check, Play, Plus, Sparkles, Star, Target } from "lucide-react";
 import { Button, Card, Empty, Input, MotionCheck, Pill } from "../components/ui";
 import { C } from "../core/constants";
 import {
@@ -15,13 +15,17 @@ import {
   submitOnEnter,
   uid,
 } from "../core/date";
+import { getDailyPlan } from "../core/groq";
 import { useBibleVerse } from "../hooks/useBibleVerse";
+
+const MAX_MIT = 3;
 
 export function TodayTab({
   tasks,
   setTasks,
   habits,
   setHabits,
+  goals = [],
   setTab,
   startFocus,
 }) {
@@ -29,7 +33,10 @@ export function TodayTab({
   const [quickTitle, setQuickTitle] = useState("");
   const [quickDate, setQuickDate] = useState(localDate());
   const [selectedDay, setSelectedDay] = useState(localDate());
+  const [planBusy, setPlanBusy] = useState(false);
+  const [plan, setPlan] = useState("");
   const today = localDate();
+  const goalById = new Map(goals.map((g) => [g.id, g]));
   const weekDays = dateRange(startOfWeekISO());
   const todayTasks = orderedTasks(tasks.filter((task) => task.date === today));
   const selectedTasks = orderedTasks(
@@ -77,6 +84,53 @@ export function TodayTab({
           : habit,
       ),
     );
+
+  const mitTasks = todayTasks.filter((task) => task.mit);
+  const toggleMit = (id, current) => {
+    if (!current && mitTasks.length >= MAX_MIT) return; // cap at 3
+    updateTask(id, { mit: !current });
+  };
+  const planDay = async () => {
+    setPlanBusy(true);
+    setPlan("");
+    try {
+      const overdueList = overdue.map((t) => ({ title: t.title, date: t.date }));
+      const todayList = todayTasks.map((t) => ({
+        title: t.title,
+        priority: t.priority,
+        status: t.status,
+        goalTitle: goalById.get(t.goalId)?.title,
+      }));
+      const text = await getDailyPlan({
+        tasks: todayList,
+        overdue: overdueList,
+        goals: goals.map((g) => ({ title: g.title, progress: g.progress })),
+        date: today,
+      });
+      setPlan(text);
+    } catch (e) {
+      setPlan("Could not reach the planner. Check your connection.");
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+  // Apply: mark today's tasks whose titles the AI named as MIT (cap 3).
+  const applyPlan = () => {
+    if (!plan) return;
+    const named = plan.toLowerCase();
+    let count = mitTasks.length;
+    setTasks(
+      tasks.map((task) => {
+        if (task.date !== today || task.mit || count >= MAX_MIT) return task;
+        if (named.includes(task.title.toLowerCase())) {
+          count += 1;
+          return { ...task, mit: true };
+        }
+        return task;
+      }),
+    );
+  };
+
   return (
     <div className="today-shell">
       <div className="hero-panel">
@@ -115,6 +169,52 @@ export function TodayTab({
           <strong>{verse.reference}</strong>
         </div>
       </Card>
+
+      <Card className="mit-card">
+        <div className="card-head">
+          <div>
+            <h3><Star size={18} color={C.amber} /> Top 3 Today</h3>
+            <span className="mit-sub">Your most important tasks. Tap the star on any task to add it (max {MAX_MIT}).</span>
+          </div>
+          <Button onClick={planDay} disabled={planBusy}>
+            {planBusy ? "Thinking..." : <><Sparkles size={14} /> Plan my day</>}
+          </Button>
+        </div>
+        <div className="mit-list">
+          {mitTasks.map((task) => (
+            <div className="mit-item" key={task.id}>
+              <MotionCheck
+                className={task.status === "Done" ? "check done" : "check"}
+                onClick={() => updateTask(task.id, { status: task.status === "Done" ? "To Do" : "Done" })}
+              >
+                {task.status === "Done" && <Check size={14} />}
+              </MotionCheck>
+              <strong className={task.status === "Done" ? "complete" : ""}>{task.title}</strong>
+              {goalById.get(task.goalId) && (
+                <Pill color={C.purple}><Target size={11} /> {goalById.get(task.goalId).title}</Pill>
+              )}
+              <Button title="Focus on this task" onClick={() => startFocus(task.id)}>
+                <Play size={14} /> Focus
+              </Button>
+            </div>
+          ))}
+          {!mitTasks.length && (
+            <Empty>No Top 3 set. Star up to {MAX_MIT} tasks below, or tap "Plan my day".</Empty>
+          )}
+        </div>
+        {plan && (
+          <div className="mit-plan">
+            <div className="mit-plan-head">
+              <span><Sparkles size={13} /> Suggested focus</span>
+              <Button onClick={applyPlan}><Star size={13} /> Make these my Top 3</Button>
+            </div>
+            {plan.split("\n").filter(Boolean).map((line, i) => (
+              <p key={i}>{line}</p>
+            ))}
+          </div>
+        )}
+      </Card>
+
       <div className="today-grid">
         <Card>
           <div className="card-head">
@@ -144,8 +244,17 @@ export function TodayTab({
                   </strong>
                   <span>
                     {task.priority} - {task.category}
+                    {goalById.get(task.goalId) ? ` - ${goalById.get(task.goalId).title}` : ""}
                   </span>
                 </div>
+                <button
+                  className={task.mit ? "mit-star on" : "mit-star"}
+                  title={task.mit ? "Remove from Top 3" : "Add to Top 3"}
+                  onClick={() => toggleMit(task.id, task.mit)}
+                  disabled={!task.mit && mitTasks.length >= MAX_MIT}
+                >
+                  <Star size={15} />
+                </button>
                 <Button
                   title="Focus on this task"
                   onClick={() => startFocus(task.id)}
