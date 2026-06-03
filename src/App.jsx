@@ -4,6 +4,7 @@ import {
   BarChart3,
   CheckSquare,
   ClipboardList,
+  Cloud,
   Database,
   Download,
   Flame,
@@ -107,6 +108,8 @@ export default function App() {
 
   if (!loaded) return <div className="loading">Loading tracker data...</div>;
 
+  const synced = isSupabaseConfigured();
+
   return (
     <div className="app">
       <header className="topbar">
@@ -116,16 +119,20 @@ export default function App() {
           </div>
           <div>
             <h1>Tracker</h1>
-            <span>Browser-local SQLite - {localDate()}</span>
+            <span>{synced ? "Cloud sync" : "Browser-local"} - {localDate()}</span>
           </div>
         </div>
         <div className="header-actions">
           <div
             className="privacy-badge"
-            title="Your tracker and finance data stays in this browser. Exchange-rate refresh sends no personal data. AI buttons send a small snapshot only when clicked."
+            title={
+              synced
+                ? "Your data syncs privately to your Supabase account (encrypted in transit, row-level secured to you) and caches locally for offline use. AI buttons send a small snapshot only when clicked."
+                : "Your data stays in this browser. AI buttons send a small snapshot only when clicked."
+            }
           >
-            <Database size={14} />
-            <span>Local data</span>
+            {synced ? <Cloud size={14} /> : <Database size={14} />}
+            <span>{synced ? "Cloud synced" : "Local data"}</span>
           </div>
           <div className="app-switch" aria-label="Choose app">
             <button
