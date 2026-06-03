@@ -8,13 +8,25 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const isSupabaseConfigured = () => Boolean(url && anonKey);
 
 // Singleton client. Created only when configured; otherwise null so callers
-// can short-circuit to local-only behavior.
-export const supabase = isSupabaseConfigured()
-  ? createClient(url, anonKey, {
+// can short-circuit to local-only behavior. createClient throws on a malformed
+// URL (e.g. a bare project ref instead of https://<ref>.supabase.co), so guard
+// it and fall back to local-only mode rather than crashing the app.
+function createSupabaseClient() {
+  if (!isSupabaseConfigured()) return null;
+  try {
+    return createClient(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
       },
-    })
-  : null;
+    });
+  } catch (err) {
+    console.warn(
+      `[supabase] Invalid configuration — running in local-only mode. ${err?.message || err}`,
+    );
+    return null;
+  }
+}
+
+export const supabase = createSupabaseClient();
