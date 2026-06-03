@@ -274,9 +274,17 @@ const normalizeSavingsRow = (row) => ({
   targetDate: row.targetDate || "",
 });
 
+const normalizeAi = (ai = {}) => ({
+  forecast: ai.forecast ?? null,
+  advice: ai.advice ?? null,
+  split: ai.split ?? null,
+  generatedAt: ai.generatedAt && typeof ai.generatedAt === "object" ? ai.generatedAt : {},
+});
+
 export const normalizeFinance = (finance = {}) => {
   const exchange = normalizeExchange(finance.exchange);
   return {
+    ai: normalizeAi(finance.ai),
     income: Array.isArray(finance.income)
       ? finance.income.map((row) => moneyRow(row, ["budget", "actual"]))
       : [{ id: uid(), name: "Senior AI Engineer salary", budget: 1200000, actual: 1200000 }],
