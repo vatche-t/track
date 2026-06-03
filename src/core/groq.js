@@ -1,4 +1,6 @@
-const GROQ_API = "https://api.groq.com/openai/v1/chat/completions";
+// AI calls go through the Vercel serverless proxy at /api/groq, which holds the
+// GROQ_API_KEY server-side. The key never reaches the client bundle.
+const GROQ_PROXY = "/api/groq";
 export const GROQ_MODEL = "openai/gpt-oss-120b";
 
 // System prompt shared across all finance/tracker calls.
@@ -16,19 +18,11 @@ RESPONSE RULES:
 - Keep responses under 180 words unless asked for detail
 - Use plain English, no jargon`;
 
-function getKey() {
-  return (
-    localStorage.getItem("pt_groq_key") ||
-    import.meta.env.VITE_GROQ_API_KEY ||
-    ""
-  );
-}
-
-export const hasGroqKey = () => !!getKey();
+// Key now lives server-side behind /api/groq. Kept exported so existing callers
+// don't break; the proxy reports a configuration error if the key is missing.
+export const hasGroqKey = () => true;
 
 async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
-  const key = getKey();
-  if (!key) throw new Error("No Groq API key. Set VITE_GROQ_API_KEY in .env");
   const payload = {
     model: GROQ_MODEL,
     messages: [{ role: "system", content: SYSTEM }, ...messages],
@@ -39,11 +33,10 @@ async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
     payload.reasoning_effort = "low";
   }
 
-  const res = await fetch(GROQ_API, {
+  const res = await fetch(GROQ_PROXY, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify(payload),
   });

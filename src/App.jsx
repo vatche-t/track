@@ -8,12 +8,15 @@ import {
   Download,
   Flame,
   Home,
+  LogOut,
   Sunrise,
   Target,
   TrendingUp,
   Wallet,
 } from "lucide-react";
 import { Button } from "./components/ui";
+import { isSupabaseConfigured } from "./core/supabase";
+import { signOut } from "./features/AuthGate";
 import { activeTask, isMonday, lastWeekISO, localDate } from "./core/date";
 import { AnalyticsTab } from "./features/AnalyticsTab";
 import { ExportModal } from "./features/ExportModal";
@@ -28,7 +31,6 @@ import { WeeklyReviewTab } from "./features/WeeklyReviewTab";
 import { useFocusTimer } from "./hooks/useFocusTimer";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTrackerData } from "./hooks/useTrackerData";
-import { AppStyles } from "./styles/AppStyles";
 
 const TRACK_TABS = [
   ["today", "Today", Home],
@@ -107,7 +109,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <AppStyles />
       <header className="topbar">
         <div className="brand">
           <div className="mark">
@@ -152,6 +153,11 @@ export default function App() {
           <Button variant="outline" onClick={() => setShowExport(true)}>
             <Download size={16} /> Export / Backup
           </Button>
+          {isSupabaseConfigured() && (
+            <Button variant="outline" onClick={signOut} title="Sign out">
+              <LogOut size={16} /> Sign out
+            </Button>
+          )}
         </div>
       </header>
       {activeApp === "track" && (
