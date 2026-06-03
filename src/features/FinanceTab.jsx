@@ -142,6 +142,7 @@ export function FinanceTab({ finance, setFinance }) {
   const [displayCurrency, setDisplayCurrency] = useState(AMD);
   const [financeView, setFinanceView] = useState("plan");
   const [planMode, setPlanMode] = useState("overview");
+  const [adviceOpen, setAdviceOpen] = useState(false);
   const [rateBusy, setRateBusy] = useState(false);
   const [rateError, setRateError] = useState("");
   const [draft, setDraft] = useState({
@@ -322,6 +323,13 @@ export function FinanceTab({ finance, setFinance }) {
                 </button>
               ))}
             </div>
+            <Button
+              variant="primary"
+              onClick={() => setAdviceOpen(true)}
+              title="Get AI financial advice"
+            >
+              <BrainCircuit size={15} /> AI Advice
+            </Button>
             <Button onClick={refreshRate} disabled={rateBusy} title="Refresh USD to AMD rate">
               <RefreshCw size={15} /> {rateBusy ? "Updating" : "Rate"}
             </Button>
@@ -340,9 +348,16 @@ export function FinanceTab({ finance, setFinance }) {
         }
       />
 
+      <AiAdviceModal
+        open={adviceOpen}
+        onClose={() => setAdviceOpen(false)}
+        totals={totals}
+        model={model}
+        setFinance={setFinance}
+      />
+
       {financeView === "analytics" ? (
         <>
-          <AiAdviceCard totals={totals} model={model} setFinance={setFinance} />
           <FinanceAnalyticsPanel finance={model} />
         </>
       ) : (
@@ -424,7 +439,6 @@ export function FinanceTab({ finance, setFinance }) {
               setFinance={setFinance}
             />
           </div>
-          <AiAdviceCard totals={totals} model={model} setFinance={setFinance} />
         </>
       )}
 
@@ -955,10 +969,9 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
   );
 }
 
-function AiAdviceCard({ totals, model, setFinance }) {
+function AiAdviceModal({ open, onClose, totals, model, setFinance }) {
   const advice = model.ai?.advice || "";
   const adviceAt = model.ai?.generatedAt?.advice || "";
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const ask = async () => {
@@ -980,48 +993,34 @@ function AiAdviceCard({ totals, model, setFinance }) {
     }
   };
   return (
-    <>
-      <button type="button" className="ai-advice-trigger" onClick={() => setOpen(true)}>
-        <div className="ai-advice-trigger-text">
-          <h3><BrainCircuit size={18} /> AI Financial Advice</h3>
+    <Modal open={open} onClose={onClose} title="AI Financial Advice">
+      <div className="ai-advice-modal">
+        <div className="ai-advice-modal-head">
           <span>
-            {advice
-              ? `Last advice generated ${timeAgo(adviceAt)} - tap to view`
-              : `Powered by Groq - ${GROQ_MODEL} - tap to get advice`}
+            {advice && adviceAt
+              ? `Generated ${timeAgo(adviceAt)} - Groq ${GROQ_MODEL}`
+              : "Sends your current finance snapshot to Groq."}
           </span>
+          <Button variant="primary" onClick={ask} disabled={busy}>
+            {busy ? "Thinking..." : <><RefreshCw size={14} /> {advice ? "Refresh" : "Get Advice"}</>}
+          </Button>
         </div>
-        <span className="ai-advice-cta">{advice ? "View advice" : "Get Advice"}</span>
-      </button>
-
-      <Modal open={open} onClose={() => setOpen(false)} title="AI Financial Advice">
-        <div className="ai-advice-modal">
-          <div className="ai-advice-modal-head">
-            <span>
-              {advice && adviceAt
-                ? `Generated ${timeAgo(adviceAt)}`
-                : "Sends your current finance snapshot to Groq."}
-            </span>
-            <Button variant="primary" onClick={ask} disabled={busy}>
-              {busy ? "Thinking..." : <><RefreshCw size={14} /> {advice ? "Refresh" : "Get Advice"}</>}
-            </Button>
+        {err && <div className="rate-error">{err}</div>}
+        {advice ? (
+          <div className="ai-advice">
+            {advice.split("\n").filter(Boolean).map((line, i) => (
+              <p key={i}>{line}</p>
+            ))}
           </div>
-          {err && <div className="rate-error">{err}</div>}
-          {advice ? (
-            <div className="ai-advice">
-              {advice.split("\n").filter(Boolean).map((line, i) => (
-                <p key={i}>{line}</p>
-              ))}
+        ) : (
+          !busy && (
+            <div className="empty-inline">
+              Click "Get Advice" for AI-powered suggestions based on your income, expenses, and goals.
             </div>
-          ) : (
-            !busy && (
-              <div className="empty-inline">
-                Click "Get Advice" for AI-powered suggestions based on your income, expenses, and goals.
-              </div>
-            )
-          )}
-        </div>
-      </Modal>
-    </>
+          )
+        )}
+      </div>
+    </Modal>
   );
 }
 

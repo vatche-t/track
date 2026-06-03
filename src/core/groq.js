@@ -6,30 +6,34 @@ export const GROQ_MODEL = "openai/gpt-oss-120b";
 // System prompt shared across all finance/tracker calls.
 // Uses labelled sections (outperforms prose for Llama 3.x instruction-tuned models).
 // Opener-phrase suppression avoids "Sure!/Certainly!" noise artifacts from RLHF training.
-const SYSTEM = `ROLE: You are Kai, a personal finance and productivity assistant for someone in Yerevan, Armenia.
+const SYSTEM = `ROLE: You are Kai, a sharp personal-finance assistant for someone living in Yerevan, Armenia. All money is Armenian Dram (AMD).
 
 HARD CONSTRAINTS:
-1. Never invent financial figures or balances
-2. Never give tax, legal, or investment advice
-3. Start every response with the first word of your answer — no opener phrases like "Sure", "Certainly", "Of course", "Great question"
+1. Use only the numbers provided — never invent figures, balances, or categories.
+2. Never give tax, legal, or investment-product advice.
+3. Output the answer directly: no preamble, no sign-off, no "Sure"/"Certainly", no markdown headers or **bold**.
 
-RESPONSE RULES:
-- Be direct and specific — reference actual numbers from the data
-- Keep responses under 180 words unless asked for detail
-- Use plain English, no jargon`;
+STYLE:
+- Concrete and numeric — cite the actual AMD amounts from the data.
+- Plain English, short sentences, no jargon.
+- If a number you need is missing or zero, say which number to add before drawing conclusions.`;
 
 // Key now lives server-side behind /api/groq. Kept exported so existing callers
 // don't break; the proxy reports a configuration error if the key is missing.
 export const hasGroqKey = () => true;
 
 async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
+  const isReasoning = GROQ_MODEL.startsWith("openai/gpt-oss");
+  // gpt-oss is a reasoning model: max_tokens covers reasoning + answer. With a
+  // tiny budget the reasoning step eats it all and `content` comes back empty,
+  // so floor the budget for these models even when the answer itself is short.
   const payload = {
     model: GROQ_MODEL,
     messages: [{ role: "system", content: SYSTEM }, ...messages],
-    max_tokens: maxTokens,
+    max_tokens: isReasoning ? Math.max(maxTokens, 512) : maxTokens,
     temperature,
   };
-  if (GROQ_MODEL.startsWith("openai/gpt-oss")) {
+  if (isReasoning) {
     payload.reasoning_effort = "low";
   }
 
@@ -60,15 +64,24 @@ export async function getSpendingForecast({
   const pct = spendingCap > 0 ? Math.round((spentSoFar / spendingCap) * 100) : 0;
   return chat([{
     role: "user",
-    content: `DATA:
-- Spending cap: ${spendingCap.toLocaleString()} AMD/month
-- Spent so far: ${spentSoFar.toLocaleString()} AMD (${pct}% of cap, day ${dayOfMonth}/${daysInMonth})
-- Projected month-end: ${projectedTotal.toLocaleString()} AMD
-- Safe to spend: ${safeToday.toLocaleString()} AMD/day for ${daysRemaining} days left
+    content: `Write a 2-sentence spending check-in for this month.
+
+DATA (AMD):
+- Monthly cap: ${spendingCap.toLocaleString()}
+- Spent so far: ${spentSoFar.toLocaleString()} (${pct}% of cap, day ${dayOfMonth}/${daysInMonth})
+- Projected month-end: ${projectedTotal.toLocaleString()}
+- Safe to spend: ${safeToday.toLocaleString()}/day for ${daysRemaining} days left
 - Status: ${onTrack ? "ON TRACK" : "OVER PACE"}
 
-TASK: Write exactly 2 sentences. Sentence 1: state their status and projected total vs cap. Sentence 2: give the safe daily amount and one specific action.`,
-  }], { maxTokens: 100, temperature: 0.2 });
+FORMAT — exactly two sentences:
+1) Their status + projected month-end vs the cap.
+2) The safe daily amount + one concrete action.
+
+EXAMPLE (different numbers, match this shape):
+"You're on track — projected 285,000 against your 300,000 cap. Keep daily spend under 7,500 for the remaining 12 days and you'll finish with a cushion."
+
+Now write the check-in for the DATA above.`,
+  }], { maxTokens: 220, temperature: 0.2 });
 }
 
 export async function getFinancialAdvice({ totals, savings, goals, exchange, expenses }) {
@@ -117,14 +130,18 @@ Top spending categories this month:
 ${topCategories || "  No logged expenses yet"}
 
 QUALITY RULES:
-- Rank advice by AMD impact; do not over-optimize tiny expenses
-- If income is 0 AMD, treat it as missing income data unless the user explicitly says they have no income
-- Do not suggest spreadsheets, notebooks, or generic tracking; this app already tracks expenses
-- Do not shame basic food or grocery spending under 25,000 AMD/month
-- Use the listed category names and amounts when making recommendations
-- If data is incomplete, say what number to add next before giving conclusions
+- Rank by AMD impact; ignore tiny expenses, lead with the biggest lever.
+- If income is 0 AMD, treat it as missing data (not "no income") and ask for it first.
+- This app already tracks expenses — never suggest spreadsheets, notebooks, or "track your spending".
+- Don't shame basic food/groceries under 25,000 AMD/month.
+- Reference the listed category names and their amounts.
 
-TASK: Give exactly 3 recommendations. Format each as "1. Action — reason." Keep each recommendation under 35 words.`;
+TASK: Give exactly 3 recommendations, ranked by impact. One line each, format "N. Action — reason with the AMD number." Under 35 words each.
+
+EXAMPLE (different data, match this shape):
+1. Cut Eating out from 95,000 to 55,000 AMD — frees 40,000/month toward your emergency fund.
+2. Redirect the 30,000 unassigned cash to the relocation goal — closes its gap two months sooner.
+3. Raise the house-fund transfer to 50,000 AMD — current 20,000 won't hit target by your date.`;
 
   return chat([{ role: "user", content: prompt }], { maxTokens: 900, temperature: 0.15 });
 }
@@ -157,15 +174,20 @@ Current recommended split:
 ${suggestionLines}
 
 TASK:
-Give a better split only if the current one should change. Include exact AMD amounts per goal and a one-line reason for each.
+Propose a better monthly split only if the current one should change; otherwise confirm it and say why. Give an exact AMD amount per goal with a one-line reason.
 
 RULES:
-- Do not invent goals or income.
-- Keep Spending card near 300,000 AMD unless income is too low.
-- Prioritize emergency cash and near-term relocation before house/investments.
-- Format as 3-5 bullets, each "Goal: amount AMD - reason".`;
+- Use only the goals and income shown — invent nothing.
+- Keep the Spending card near 300,000 AMD unless income is too low to allow it.
+- Fund emergency cash and near-term relocation before house/investments.
 
-  return chat([{ role: "user", content: prompt }], { maxTokens: 420, temperature: 0.2 });
+FORMAT — 3 to 5 bullets, each "Goal: amount AMD — reason".
+EXAMPLE (different data, match this shape):
+- Emergency fund: 80,000 AMD — only 1 month of cushion saved; build to 3 first.
+- Relocation: 120,000 AMD — needed by your March date, current 60,000 misses it.
+- House down payment: 40,000 AMD — keep moving but after the two above.`;
+
+  return chat([{ role: "user", content: prompt }], { maxTokens: 700, temperature: 0.2 });
 }
 
 export async function askDataQuestion(question, { tasks, habits, goals, finance, totals, exchange }) {
@@ -268,7 +290,7 @@ RULES:
 - No generic tracking advice; the app already tracks data.
 
 Answer in 4 concise bullets maximum.`,
-  }], { maxTokens: 450, temperature: 0.25 });
+  }], { maxTokens: 700, temperature: 0.25 });
 }
 
 export async function getGoalAdvice({ goal, totals, exchange }) {
