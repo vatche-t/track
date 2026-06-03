@@ -4,6 +4,8 @@ import {
   BarChart3,
   BrainCircuit,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Landmark,
   Plus,
   ReceiptText,
@@ -29,7 +31,7 @@ import { Modal } from "../components/Modal";
 import { FinanceAnalyticsPanel } from "./AnalyticsTab";
 import { GROQ_MODEL, getFinancialAdvice, getSpendingForecast, refineRecommendedSplit } from "../core/groq";
 import { C } from "../core/constants";
-import { localDate, submitOnEnter, sum, uid } from "../core/date";
+import { localDate, monthKey, submitOnEnter, sum, uid } from "../core/date";
 import {
   AMD,
   MONEY_CURRENCIES,
@@ -40,9 +42,11 @@ import {
   currentMonthExpenses,
   detectExpenseCategory,
   displayMoney,
+  ensureActiveMonth,
   expenseAmountAMD,
   fetchUsdAmdRate,
   financeTotals,
+  getMonth,
   formatMoney,
   fromAMD,
   fundSuggestion,
@@ -164,6 +168,9 @@ export function FinanceTab({ finance, setFinance }) {
   const spendingCap = suggestion[0]?.amount || 300000;
   const loggedThisMonth = totals.spent;
   const capPct = Math.min(100, Math.round((loggedThisMonth / spendingCap) * 100));
+  const activeMonth = model.activeMonth;
+  const PER_MONTH = new Set(["income", "fixed", "variable"]);
+  const overcommit = totals.monthlyGoal + spendingCap - totals.incomePlan;
 
   // Per-category actual spend this month, derived from logged expenses. This is the
   // single source of truth that fills the Setup "Actual" columns (read-only).
@@ -200,13 +207,38 @@ export function FinanceTab({ finance, setFinance }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Make sure the current calendar month exists (carried forward) and is active.
+  useEffect(() => {
+    setFinance((previous) => ensureActiveMonth(previous));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // income/fixed/variable live inside the active month; savings/expenses are global.
   const setItem = (section, id, patch) =>
-    updateFinance((previous) => ({
-      ...previous,
-      [section]: previous[section].map((row) =>
-        row.id === id ? { ...row, ...patch } : row,
-      ),
-    }));
+    updateFinance((previous) => {
+      if (PER_MONTH.has(section)) {
+        const key = previous.activeMonth;
+        const month = previous.months[key];
+        return {
+          ...previous,
+          months: {
+            ...previous.months,
+            [key]: {
+              ...month,
+              [section]: month[section].map((row) =>
+                row.id === id ? { ...row, ...patch } : row,
+              ),
+            },
+          },
+        };
+      }
+      return {
+        ...previous,
+        [section]: previous[section].map((row) =>
+          row.id === id ? { ...row, ...patch } : row,
+        ),
+      };
+    });
 
   const setMoneyItem = (section, id, key, value) =>
     setItem(section, id, {
@@ -214,28 +246,73 @@ export function FinanceTab({ finance, setFinance }) {
     });
 
   const addItem = (section) =>
-    updateFinance((previous) => ({
-      ...previous,
-      [section]: [
-        ...previous[section],
-        {
-          id: uid(),
-          name: "",
-          budget: 0,
-          actual: 0,
-          target: 0,
-          saved: 0,
-          monthly: 0,
-          targetDate: "",
-        },
-      ],
-    }));
+    updateFinance((previous) => {
+      const newRow = {
+        id: uid(),
+        name: "",
+        budget: 0,
+        actual: 0,
+        target: 0,
+        saved: 0,
+        monthly: 0,
+        targetDate: "",
+      };
+      if (PER_MONTH.has(section)) {
+        const key = previous.activeMonth;
+        const month = previous.months[key];
+        return {
+          ...previous,
+          months: {
+            ...previous.months,
+            [key]: { ...month, [section]: [...month[section], newRow] },
+          },
+        };
+      }
+      return { ...previous, [section]: [...previous[section], newRow] };
+    });
 
   const delItem = (section, id) =>
-    updateFinance((previous) => ({
-      ...previous,
-      [section]: previous[section].filter((row) => row.id !== id),
-    }));
+    updateFinance((previous) => {
+      if (PER_MONTH.has(section)) {
+        const key = previous.activeMonth;
+        const month = previous.months[key];
+        return {
+          ...previous,
+          months: {
+            ...previous.months,
+            [key]: {
+              ...month,
+              [section]: month[section].filter((row) => row.id !== id),
+            },
+          },
+        };
+      }
+      return {
+        ...previous,
+        [section]: previous[section].filter((row) => row.id !== id),
+      };
+    });
+
+  const shiftMonth = (key, delta) => {
+    const [y, m] = key.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+  const monthLabel = (key) => {
+    const [y, m] = key.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+      month: "long",
+      year: "numeric",
+    });
+  };
+  const goMonth = (delta) =>
+    updateFinance((previous) => {
+      const key = shiftMonth(previous.activeMonth, delta);
+      const months = previous.months[key]
+        ? previous.months
+        : { ...previous.months, [key]: getMonth(previous, key) };
+      return { ...previous, activeMonth: key, months };
+    });
 
   const addExpense = () => {
     if (!draft.note.trim() || !(+draft.amount > 0)) return;
@@ -343,6 +420,20 @@ export function FinanceTab({ finance, setFinance }) {
                 </button>
               ))}
             </div>
+            <div className="month-switcher">
+              <button type="button" onClick={() => goMonth(-1)} title="Previous month">
+                <ChevronLeft size={15} />
+              </button>
+              <strong>{monthLabel(activeMonth)}</strong>
+              <button
+                type="button"
+                onClick={() => goMonth(1)}
+                disabled={activeMonth >= monthKey()}
+                title="Next month"
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
             <Button
               variant="primary"
               onClick={() => setAdviceOpen(true)}
@@ -423,6 +514,15 @@ export function FinanceTab({ finance, setFinance }) {
         />
         <Stat label="Savings plan / mo" value={displayMoney(totals.monthlyGoal, displayCurrency, exchange)} color={C.blue} />
       </div>
+
+      {overcommit > 0 && (
+        <div className="notice notice-warn">
+          Your plan needs {displayMoney(totals.monthlyGoal + spendingCap, displayCurrency, exchange)}{" "}
+          (savings + {displayMoney(spendingCap, displayCurrency, exchange)} life cap) but planned income is{" "}
+          {displayMoney(totals.incomePlan, displayCurrency, exchange)} — over by{" "}
+          <b>{displayMoney(overcommit, displayCurrency, exchange)}</b>. Lower a goal contribution or the cap.
+        </div>
+      )}
 
       <div className="finance-scope-tabs" aria-label="Finance plan sections">
         {[
