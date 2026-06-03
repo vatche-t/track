@@ -6,11 +6,15 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Coins,
+  CreditCard,
   Landmark,
+  PiggyBank,
   Plus,
   ReceiptText,
   RefreshCw,
   RotateCcw,
+  Scale,
   Target,
   Trash2,
   Wallet,
@@ -47,6 +51,7 @@ import {
   fetchUsdAmdRate,
   financeTotals,
   getMonth,
+  netWorthSummary,
   formatMoney,
   fromAMD,
   fundSuggestion,
@@ -314,6 +319,35 @@ export function FinanceTab({ finance, setFinance }) {
       return { ...previous, activeMonth: key, months };
     });
 
+  // One-click: log a setup row's planned amount as an expense in the active month.
+  const logFromSetup = (row) => {
+    const amount = +row.budget || 0;
+    if (amount <= 0) return;
+    const category =
+      categories.find(
+        (c) => c.name.toLowerCase() === String(row.name || "").toLowerCase(),
+      ) || detectExpenseCategory(row.name);
+    const date = activeMonth === monthKey() ? localDate() : `${activeMonth}-15`;
+    updateFinance((previous) => ({
+      ...previous,
+      expenses: [
+        createExpense(
+          {
+            date,
+            note: row.name || category.name,
+            amount,
+            currency: AMD,
+            categoryId: category.id,
+            categoryName: category.name,
+            source: "Quick log",
+          },
+          previous.exchange,
+        ),
+        ...previous.expenses,
+      ],
+    }));
+  };
+
   const addExpense = () => {
     if (!draft.note.trim() || !(+draft.amount > 0)) return;
     const category =
@@ -530,6 +564,7 @@ export function FinanceTab({ finance, setFinance }) {
           ["spend", "Spend", "Log expenses and review history"],
           ["setup", "Setup", "Income, fixed costs, variable plan"],
           ["goals", "Goals", "Targets, saved amounts, monthly funding"],
+          ["wealth", "Wealth", "Net worth, debts, sinking funds"],
         ].map(([id, label, hint]) => (
           <button
             key={id}
@@ -565,6 +600,7 @@ export function FinanceTab({ finance, setFinance }) {
               setFinance={setFinance}
             />
           </div>
+          <NeedsWantsCard totals={totals} model={model} displayCurrency={displayCurrency} exchange={exchange} />
         </>
       )}
 
@@ -690,6 +726,7 @@ export function FinanceTab({ finance, setFinance }) {
             setMoneyItem={setMoneyItem}
             addItem={addItem}
             delItem={delItem}
+            onLog={logFromSetup}
           />
           <MoneySection
             title="Monthly Variable Plan"
@@ -703,6 +740,7 @@ export function FinanceTab({ finance, setFinance }) {
             setMoneyItem={setMoneyItem}
             addItem={addItem}
             delItem={delItem}
+            onLog={logFromSetup}
           />
         </div>
       )}
@@ -722,6 +760,15 @@ export function FinanceTab({ finance, setFinance }) {
             delItem={delItem}
           />
         </div>
+      )}
+
+      {planMode === "wealth" && (
+        <WealthPanel
+          model={model}
+          displayCurrency={displayCurrency}
+          exchange={exchange}
+          updateFinance={updateFinance}
+        />
       )}
         </>
       )}
@@ -1261,9 +1308,15 @@ function MoneySection({
   addItem,
   delItem,
   derivedActual,
+  onLog,
 }) {
   const accent = ACCENT[section];
-  const template = ["minmax(0,1.2fr)", ...columns.map(() => "minmax(72px,1fr)"), "32px"].join(" ");
+  const template = [
+    "minmax(0,1.2fr)",
+    ...columns.map(() => "minmax(72px,1fr)"),
+    ...(onLog ? ["34px"] : []),
+    "32px",
+  ].join(" ");
 
   if (section === "savings") {
     return (
@@ -1306,6 +1359,7 @@ function MoneySection({
         {columns.map((column) => (
           <span key={column}>{COL_LABEL[column]}</span>
         ))}
+        {onLog && <span />}
         <span />
       </div>
       <div className="stack">
@@ -1363,6 +1417,15 @@ function MoneySection({
                   />
                 );
               })}
+              {onLog && (
+                <button
+                  className="icon-btn log-btn"
+                  title={`Log ${displayMoney(row.budget || 0, displayCurrency, exchange)} as an expense this month`}
+                  onClick={() => onLog(row)}
+                >
+                  <ReceiptText size={14} />
+                </button>
+              )}
               <button className="icon-btn danger" onClick={() => delItem(section, row.id)}>
                 <Trash2 size={14} />
               </button>
@@ -1372,5 +1435,149 @@ function MoneySection({
         {!rows.length && <div className="empty-inline">No items yet - click Add.</div>}
       </div>
     </Card>
+  );
+}
+
+// Overview: needs vs wants split, savings rate, and emergency-fund runway.
+function NeedsWantsCard({ totals, model, displayCurrency, exchange }) {
+  const essential = totals.essentialSpent;
+  const discretionary = totals.discretionarySpent;
+  const total = essential + discretionary;
+  const essentialPct = total > 0 ? Math.round((essential / total) * 100) : 0;
+  const emergency =
+    model.savings.find((f) => f.name.toLowerCase().includes("emergency")) || null;
+  const monthlyNeed = Math.max(1, totals.essentialSpent || totals.fixed || 1);
+  const runwayMonths = emergency ? (+emergency.saved || 0) / monthlyNeed : 0;
+
+  return (
+    <Card className="needs-wants-card">
+      <div className="card-head">
+        <h3><Scale size={18} /> Needs vs Wants</h3>
+        <Pill color={totals.savingsRate >= 30 ? C.green : totals.savingsRate >= 10 ? C.amber : C.red}>
+          {totals.savingsRate}% savings rate
+        </Pill>
+      </div>
+      <div className="needs-wants-bar">
+        <span className="needs" style={{ width: `${essentialPct}%` }} />
+        <span className="wants" style={{ width: `${100 - essentialPct}%` }} />
+      </div>
+      <div className="needs-wants-legend">
+        <div><i className="needs" /> Needs <b>{displayMoney(essential, displayCurrency, exchange)}</b></div>
+        <div><i className="wants" /> Wants <b>{displayMoney(discretionary, displayCurrency, exchange)}</b></div>
+      </div>
+      <div className="needs-wants-foot">
+        <div>
+          <span>Available to save</span>
+          <b style={{ color: totals.availableToSave > 0 ? C.green : C.red }}>
+            {displayMoney(totals.availableToSave, displayCurrency, exchange)}
+          </b>
+        </div>
+        <div>
+          <span>Emergency runway</span>
+          <b>{runwayMonths.toFixed(1)} mo</b>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// Phase 4: net worth, debts, sinking funds, FX holdings.
+function WealthPanel({ model, displayCurrency, exchange, updateFinance }) {
+  const nw = netWorthSummary(model);
+  const rate = exchange.rate;
+
+  const addDebt = () =>
+    updateFinance((p) => ({ ...p, debts: [...p.debts, { id: uid(), name: "", balance: 0, rate: 0, minPayment: 0 }] }));
+  const setDebt = (id, patch) =>
+    updateFinance((p) => ({ ...p, debts: p.debts.map((d) => (d.id === id ? { ...d, ...patch } : d)) }));
+  const delDebt = (id) =>
+    updateFinance((p) => ({ ...p, debts: p.debts.filter((d) => d.id !== id) }));
+
+  const addSink = () =>
+    updateFinance((p) => ({ ...p, sinkingFunds: [...p.sinkingFunds, { id: uid(), name: "", annualAmount: 0, saved: 0 }] }));
+  const setSink = (id, patch) =>
+    updateFinance((p) => ({ ...p, sinkingFunds: p.sinkingFunds.map((s) => (s.id === id ? { ...s, ...patch } : s)) }));
+  const delSink = (id) =>
+    updateFinance((p) => ({ ...p, sinkingFunds: p.sinkingFunds.filter((s) => s.id !== id) }));
+
+  const setHolding = (key, value) =>
+    updateFinance((p) => ({ ...p, holdings: { ...p.holdings, [key]: Math.max(0, Math.round(+value || 0)) } }));
+
+  const usdExposurePct = nw.heldCash > 0 ? Math.round(((model.holdings.usd * rate) / nw.heldCash) * 100) : 0;
+  const sortedDebts = [...model.debts].sort((a, b) => (b.rate || 0) - (a.rate || 0));
+
+  return (
+    <div className="wealth-panel">
+      <div className="stats-grid">
+        <Stat label="Net worth" value={displayMoney(nw.net, displayCurrency, exchange)} color={nw.net >= 0 ? C.green : C.red} />
+        <Stat label="Assets" value={displayMoney(nw.assets, displayCurrency, exchange)} color={C.blue} />
+        <Stat label="Debt" value={displayMoney(nw.debt, displayCurrency, exchange)} color={nw.debt > 0 ? C.red : C.muted} />
+        <Stat label="Saved in funds" value={displayMoney(nw.fundsSaved, displayCurrency, exchange)} color={C.purple} />
+      </div>
+
+      <div className="finance-grid">
+        <Card className="money-section" style={{ borderTopColor: C.red }}>
+          <div className="card-head">
+            <h3 style={{ color: C.red }}><CreditCard size={18} /> Debts</h3>
+            <Button variant="primary" onClick={addDebt}><Plus size={14} /> Add</Button>
+          </div>
+          <div className="stack">
+            {sortedDebts.map((d) => (
+              <div className="wealth-row" key={d.id}>
+                <Input value={d.name} onChange={(name) => setDebt(d.id, { name })} placeholder="Loan / card" />
+                <MoneyInput value={inputValue(d.balance, displayCurrency, exchange)} onChange={(v) => setDebt(d.id, { balance: toAMD(v, displayCurrency, exchange) })} currency={displayCurrency} style={{ textAlign: "right" }} />
+                <div className="wealth-rate">
+                  <Input value={String(d.rate || "")} onChange={(v) => setDebt(d.id, { rate: +String(v).replace(/[^\d.]/g, "") || 0 })} placeholder="%" />
+                  {d.rate >= 15 && <Pill color={C.red}>high</Pill>}
+                </div>
+                <button className="icon-btn danger" onClick={() => delDebt(d.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+            {!model.debts.length && <div className="empty-inline">No debt — leave empty. High-interest debt would be paid before investing.</div>}
+          </div>
+        </Card>
+
+        <Card className="money-section" style={{ borderTopColor: C.amber }}>
+          <div className="card-head">
+            <h3 style={{ color: C.amber }}><PiggyBank size={18} /> Sinking Funds</h3>
+            <Button variant="primary" onClick={addSink}><Plus size={14} /> Add</Button>
+          </div>
+          <div className="stack">
+            {model.sinkingFunds.map((s) => (
+              <div className="wealth-row" key={s.id}>
+                <Input value={s.name} onChange={(name) => setSink(s.id, { name })} placeholder="e.g. Visa & docs" />
+                <MoneyInput value={inputValue(s.annualAmount, displayCurrency, exchange)} onChange={(v) => setSink(s.id, { annualAmount: toAMD(v, displayCurrency, exchange) })} currency={displayCurrency} style={{ textAlign: "right" }} />
+                <span className="wealth-permonth" title="Set aside per month (annual ÷ 12)">
+                  {displayMoney((+s.annualAmount || 0) / 12, displayCurrency, exchange)}/mo
+                </span>
+                <button className="icon-btn danger" onClick={() => delSink(s.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+            {!model.sinkingFunds.length && <div className="empty-inline">Add irregular yearly costs (visa, gifts, laptop) to smooth them across 12 months.</div>}
+          </div>
+        </Card>
+
+        <Card className="money-section" style={{ borderTopColor: C.blue }}>
+          <div className="card-head">
+            <h3 style={{ color: C.blue }}><Coins size={18} /> Cash Holdings (FX)</h3>
+          </div>
+          <div className="holdings-grid">
+            <div className="goal-fund-field">
+              <label>AMD held</label>
+              <MoneyInput value={model.holdings.amd} onChange={(v) => setHolding("amd", v)} currency={AMD} style={{ textAlign: "right" }} />
+            </div>
+            <div className="goal-fund-field">
+              <label>USD held</label>
+              <MoneyInput value={model.holdings.usd} onChange={(v) => setHolding("usd", v)} currency={USD} style={{ textAlign: "right" }} />
+            </div>
+          </div>
+          <div className="finance-readout">
+            <span>Total cash</span><b>{displayMoney(nw.heldCash, displayCurrency, exchange)}</b>
+            <span>USD exposure</span><b>{usdExposurePct}%</b>
+            <span>Rate</span><b>{amd(rate)}/$</b>
+          </div>
+        </Card>
+      </div>
+    </div>
   );
 }
