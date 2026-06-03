@@ -7,7 +7,8 @@
     "dev": "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1",
     "build": "vite build",
     "serve": "powershell -ExecutionPolicy Bypass -File scripts/serve.ps1",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
@@ -24,5 +25,8 @@
   "overrides": {
     "tmp": "^0.2.6",
     "uuid": "^11.1.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }

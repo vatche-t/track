@@ -281,27 +281,87 @@ const normalizeAi = (ai = {}) => ({
   generatedAt: ai.generatedAt && typeof ai.generatedAt === "object" ? ai.generatedAt : {},
 });
 
+export const CURRENT_SCHEMA = 2;
+
+const defaultIncome = () => [
+  { id: uid(), name: "Senior AI Engineer salary", budget: 1200000, actual: 1200000 },
+];
+const defaultFixed = () => [
+  { id: uid(), name: "Rent", budget: 90000, actual: 90000 },
+  { id: uid(), name: "Utilities", budget: 30000, actual: 30000 },
+];
+const defaultVariable = () => [
+  { id: uid(), name: "Groceries", budget: 20000, actual: 0 },
+  { id: uid(), name: "Transport", budget: 18000, actual: 0 },
+  { id: uid(), name: "Eating out", budget: 43000, actual: 0 },
+  { id: uid(), name: "Cigarettes", budget: 13500, actual: 0 },
+];
+
+const normalizeMonthSetup = (setup = {}) => ({
+  income: Array.isArray(setup.income)
+    ? setup.income.map((row) => moneyRow(row, ["budget", "actual"]))
+    : defaultIncome(),
+  fixed: Array.isArray(setup.fixed)
+    ? setup.fixed.map((row) => moneyRow(row, ["budget", "actual"]))
+    : defaultFixed(),
+  variable: Array.isArray(setup.variable)
+    ? setup.variable.map((row) => moneyRow(row, ["budget", "actual"]))
+    : defaultVariable(),
+  contributions:
+    setup.contributions && typeof setup.contributions === "object"
+      ? setup.contributions
+      : {},
+  ai: normalizeAi(setup.ai),
+});
+
+const contributionsFromSavings = (savings = []) => {
+  const map = {};
+  savings.forEach((fund) => {
+    if (fund.id && +fund.monthly > 0) map[fund.id] = +fund.monthly;
+  });
+  return map;
+};
+
 export const normalizeFinance = (finance = {}) => {
   const exchange = normalizeExchange(finance.exchange);
+
+  // Migrate the old flat shape (no `months`) into months[currentMonth] once.
+  const sourceMonths = finance.months || {
+    [monthKey()]: {
+      income: finance.income,
+      fixed: finance.fixed,
+      variable: finance.variable,
+      contributions: contributionsFromSavings(finance.savings),
+      ai: finance.ai,
+    },
+  };
+
+  const months = {};
+  Object.keys(sourceMonths).forEach((key) => {
+    months[key] = normalizeMonthSetup(sourceMonths[key]);
+  });
+  if (!Object.keys(months).length) months[monthKey()] = normalizeMonthSetup({});
+
+  const activeMonth =
+    finance.activeMonth && months[finance.activeMonth]
+      ? finance.activeMonth
+      : months[monthKey()]
+        ? monthKey()
+        : Object.keys(months).sort().pop();
+
+  const active = months[activeMonth];
+
   return {
-    ai: normalizeAi(finance.ai),
-    income: Array.isArray(finance.income)
-      ? finance.income.map((row) => moneyRow(row, ["budget", "actual"]))
-      : [{ id: uid(), name: "Senior AI Engineer salary", budget: 1200000, actual: 1200000 }],
-    fixed: Array.isArray(finance.fixed)
-      ? finance.fixed.map((row) => moneyRow(row, ["budget", "actual"]))
-      : [
-          { id: uid(), name: "Rent", budget: 90000, actual: 90000 },
-          { id: uid(), name: "Utilities", budget: 30000, actual: 30000 },
-        ],
-    variable: Array.isArray(finance.variable)
-      ? finance.variable.map((row) => moneyRow(row, ["budget", "actual"]))
-      : [
-          { id: uid(), name: "Groceries", budget: 20000, actual: 0 },
-          { id: uid(), name: "Transport", budget: 18000, actual: 0 },
-          { id: uid(), name: "Eating out", budget: 43000, actual: 0 },
-          { id: uid(), name: "Cigarettes", budget: 13500, actual: 0 },
-        ],
+    schemaVersion: CURRENT_SCHEMA,
+    activeMonth,
+    months,
+    // Active-month setup mirrored to top level so existing read sites keep working.
+    income: active.income,
+    fixed: active.fixed,
+    variable: active.variable,
+    contributions: active.contributions,
+    ai: active.ai,
+    // Global data
     savings: Array.isArray(finance.savings)
       ? finance.savings.map(normalizeSavingsRow)
       : DEFAULT_SAVINGS_FUNDS,
@@ -310,6 +370,41 @@ export const normalizeFinance = (finance = {}) => {
     ),
     categories: withDefaultCategories(finance.categories),
     exchange,
+  };
+};
+
+// Deep-ish copy of a month setup with fresh row ids so editing a carried-forward
+// month never mutates the source month's rows.
+const copyMonthSetup = (setup) => ({
+  income: setup.income.map((row) => ({ ...row, id: uid() })),
+  fixed: setup.fixed.map((row) => ({ ...row, id: uid() })),
+  variable: setup.variable.map((row) => ({ ...row, id: uid() })),
+  contributions: { ...setup.contributions },
+  ai: { forecast: null, advice: null, split: null, generatedAt: {} },
+});
+
+// Returns the setup for `key`, carrying forward from the most recent earlier month
+// when that month does not exist yet. Pure — does not mutate `finance`.
+export const getMonth = (finance, key) => {
+  const model = finance.months ? finance : normalizeFinance(finance);
+  if (model.months[key]) return model.months[key];
+  const earlier = Object.keys(model.months).filter((k) => k < key).sort();
+  const source = earlier.length ? model.months[earlier[earlier.length - 1]] : null;
+  return source ? copyMonthSetup(source) : normalizeMonthSetup({});
+};
+
+// Ensures the current calendar month exists (carried forward) and is active.
+// Returns a new finance object; safe to feed to setFinance.
+export const ensureActiveMonth = (finance) => {
+  const model = normalizeFinance(finance);
+  const key = monthKey();
+  if (model.months[key]) {
+    return model.activeMonth === key ? model : { ...model, activeMonth: key };
+  }
+  return {
+    ...model,
+    activeMonth: key,
+    months: { ...model.months, [key]: getMonth(model, key) },
   };
 };
 
@@ -346,12 +441,15 @@ export const currentMonthExpenses = (finance) =>
 //   - Monthly plan (budget): income.budget − planned fixed/variable/savings.
 // fixed/variableManual are now the breakdown of `spent` by category type (not the
 // old Setup "actual" columns), so they always sum back to `spent`.
-export const financeTotals = (finance) => {
+export const financeTotals = (finance, monthKeyArg) => {
   const normalized = normalizeFinance(finance);
-  const income = sum(normalized.income, "actual");
-  const incomePlan = sum(normalized.income, "budget");
-  const fixedPlan = sum(normalized.fixed, "budget");
-  const variablePlan = sum(normalized.variable, "budget");
+  const key = monthKeyArg || normalized.activeMonth;
+  const setup = normalized.months[key] || normalized.months[normalized.activeMonth];
+
+  const income = sum(setup.income, "actual");
+  const incomePlan = sum(setup.income, "budget");
+  const fixedPlan = sum(setup.fixed, "budget");
+  const variablePlan = sum(setup.variable, "budget");
 
   const typeById = new Map(normalized.categories.map((c) => [c.id, c.type]));
   const typeByName = new Map(
@@ -359,27 +457,30 @@ export const financeTotals = (finance) => {
   );
   let spent = 0;
   let fixedSpent = 0;
-  currentMonthExpenses(normalized).forEach((expense) => {
-    const amount = expenseAmountAMD(expense, normalized.exchange);
-    spent += amount;
-    const type =
-      typeById.get(expense.categoryId) ||
-      typeByName.get(String(expense.categoryName || "").toLowerCase());
-    if (type === "fixed") fixedSpent += amount;
-  });
+  normalized.expenses
+    .filter((expense) => (expense.date || "").startsWith(key))
+    .forEach((expense) => {
+      const amount = expenseAmountAMD(expense, normalized.exchange);
+      spent += amount;
+      const type =
+        typeById.get(expense.categoryId) ||
+        typeByName.get(String(expense.categoryName || "").toLowerCase());
+      if (type === "fixed") fixedSpent += amount;
+    });
   const variableSpent = spent - fixedSpent;
 
   const saved = sum(normalized.savings, "saved");
-  const monthlyGoal = normalized.savings.reduce(
-    (total, fund) => total + (+fund.monthly || 0),
-    0,
-  );
+  const monthlyGoal = normalized.savings.reduce((total, fund) => {
+    const override = setup.contributions[fund.id];
+    return total + (override != null ? +override || 0 : +fund.monthly || 0);
+  }, 0);
 
   const net = income - spent;
   const availableToSave = Math.max(0, net);
   const planBalance = incomePlan - fixedPlan - variablePlan - monthlyGoal;
 
   return {
+    monthKey: key,
     // this month (actual)
     income,
     spent,
