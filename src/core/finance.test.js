@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CURRENT_SCHEMA,
+  allocationSuggestion,
   ensureActiveMonth,
   financeTotals,
   getMonth,
@@ -92,5 +93,34 @@ describe("month model", () => {
     expect(t.net).toBe(343000);
     expect(t.monthlyGoal).toBe(600000);
     expect(t.planBalance).toBe(1200000 - 90000 - 0 - 600000);
+  });
+
+  it("splits spend into essential vs discretionary", () => {
+    const f = normalizeFinance({
+      months: { "2026-06": { income: [], fixed: [], variable: [], contributions: {} } },
+      activeMonth: "2026-06",
+      expenses: [
+        { id: "a", date: "2026-06-01", note: "Rent", amount: 90000, currency: "AMD", amountAMD: 90000, categoryId: "rent", categoryName: "Rent" },
+        { id: "b", date: "2026-06-02", note: "Smokes", amount: 5000, currency: "AMD", amountAMD: 5000, categoryId: "cigarettes", categoryName: "Cigarettes" },
+      ],
+    });
+    const t = financeTotals(f, "2026-06");
+    expect(t.essentialSpent).toBe(90000);
+    expect(t.discretionarySpent).toBe(5000);
+  });
+});
+
+describe("goal sequencing waterfall", () => {
+  it("fully funds the top-priority goal before the next", () => {
+    const savings = [
+      { id: "house", name: "House down payment", target: 7500000, saved: 0, monthly: 0, priority: 4 },
+      { id: "emergency", name: "Emergency fund", target: 200000, saved: 0, monthly: 0, priority: 1 },
+    ];
+    // income 700000: cap 300000 + flex 50000 = leaves 350000 for goals.
+    const plan = allocationSuggestion(700000, savings);
+    const emergency = plan.find((p) => p.name === "Emergency fund");
+    const house = plan.find((p) => p.name === "House down payment");
+    expect(emergency.amount).toBe(200000); // filled to its gap first
+    expect(house.amount).toBe(150000);     // remainder rolls down
   });
 });

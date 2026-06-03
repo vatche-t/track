@@ -18,88 +18,108 @@ export const FINANCE_CATEGORIES = [
     id: "rent",
     name: "Rent",
     type: "fixed",
+    essential: true,
     keywords: ["rent", "apartment", "flat", "տուն", "վարձ"],
   },
   {
     id: "utilities",
     name: "Utilities",
     type: "fixed",
+    essential: true,
     keywords: ["utility", "electric", "water", "gas", "internet", "ucom", "veon", "vivacell"],
   },
   {
     id: "groceries",
     name: "Groceries",
     type: "variable",
+    essential: true,
     keywords: ["grocery", "market", "supermarket", "sas", "yerevan city", "carrefour", "food"],
   },
   {
     id: "garbage_spending",
     name: "Garbage Spending",
     type: "variable",
+    essential: false,
     keywords: ["garbage", "waste", "impulse", "phone accessory", "accessory"],
   },
   {
     id: "transport",
     name: "Transport",
     type: "variable",
+    essential: true,
     keywords: ["bus", "metro", "transport", "taxi", "gg", "yandex"],
   },
   {
     id: "eating_out",
     name: "Eating out",
     type: "variable",
+    essential: false,
     keywords: ["lunch", "restaurant", "cafe", "coffee", "delivery", "glovo", "menu.am"],
   },
   {
     id: "cigarettes",
     name: "Cigarettes",
     type: "variable",
+    essential: false,
     keywords: ["cigarette", "smoke", "tobacco", "marlboro", "parliament"],
   },
   {
     id: "fiancee",
     name: "Fiancee relocation",
     type: "goal",
+    essential: true,
     keywords: ["fiance", "relocation", "document", "visa", "ticket"],
   },
   {
     id: "health",
     name: "Health",
     type: "variable",
+    essential: true,
     keywords: ["doctor", "pharmacy", "medicine", "clinic", "health"],
   },
   {
     id: "skills",
     name: "Skills",
     type: "variable",
+    essential: false,
     keywords: ["course", "book", "training", "subscription", "learning"],
   },
   {
     id: "fun",
     name: "Fun",
     type: "variable",
+    essential: false,
     keywords: ["movie", "game", "gift", "fun", "shopping"],
   },
-  { id: "other", name: "Other", type: "variable", keywords: [] },
+  { id: "other", name: "Other", type: "variable", essential: false, keywords: [] },
 ];
 
 const withDefaultCategories = (categories) => {
   if (!categories?.length) return FINANCE_CATEGORIES;
+  const byId = new Map(FINANCE_CATEGORIES.map((c) => [c.id, c]));
   const ids = new Set(categories.map((category) => category.id));
   return [
-    ...categories,
+    // Backfill `essential` on stored categories that predate the needs/wants split.
+    ...categories.map((category) =>
+      category.essential === undefined
+        ? { ...category, essential: byId.get(category.id)?.essential ?? false }
+        : category,
+    ),
     ...FINANCE_CATEGORIES.filter((category) => !ids.has(category.id)),
   ];
 };
 
+// priority drives the goal-sequencing waterfall: lower = funded first.
+// Coach order: stability (emergency) → time-sensitive relocation → support → house → investing.
 export const DEFAULT_SAVINGS_FUNDS = [
   {
-    id: "house-down-payment",
-    name: "House down payment",
-    target: 7500000,
+    id: "emergency-fund",
+    name: "Emergency fund",
+    target: 1500000,
     saved: 0,
-    monthly: 600000,
+    monthly: 100000,
     targetDate: "",
+    priority: 1,
   },
   {
     id: "fiancee-relocation-fund",
@@ -108,6 +128,7 @@ export const DEFAULT_SAVINGS_FUNDS = [
     saved: 0,
     monthly: 150000,
     targetDate: "",
+    priority: 2,
   },
   {
     id: "fiancee-support-buffer",
@@ -116,14 +137,16 @@ export const DEFAULT_SAVINGS_FUNDS = [
     saved: 0,
     monthly: 100000,
     targetDate: "",
+    priority: 3,
   },
   {
-    id: "emergency-fund",
-    name: "Emergency fund",
-    target: 1500000,
+    id: "house-down-payment",
+    name: "House down payment",
+    target: 7500000,
     saved: 0,
-    monthly: 100000,
+    monthly: 600000,
     targetDate: "",
+    priority: 4,
   },
   {
     id: "investment-seed-fund",
@@ -132,6 +155,7 @@ export const DEFAULT_SAVINGS_FUNDS = [
     saved: 0,
     monthly: 100000,
     targetDate: "",
+    priority: 5,
   },
 ];
 
@@ -269,9 +293,21 @@ const moneyRow = (row, fields) => ({
   ...fields.reduce((next, field) => ({ ...next, [field]: +row[field] || 0 }), {}),
 });
 
+// Default priority for funds saved before the sequencing feature existed.
+const defaultPriority = (name) => {
+  const lower = String(name || "").toLowerCase();
+  if (lower.includes("emergency")) return 1;
+  if (lower.includes("relocation") || lower.includes("fiance")) return 2;
+  if (lower.includes("support")) return 3;
+  if (lower.includes("house") || lower.includes("down payment")) return 4;
+  if (lower.includes("investment")) return 5;
+  return 6;
+};
+
 const normalizeSavingsRow = (row) => ({
   ...moneyRow(row, ["target", "saved", "monthly"]),
   targetDate: row.targetDate || "",
+  priority: +row.priority > 0 ? +row.priority : defaultPriority(row.name),
 });
 
 const normalizeAi = (ai = {}) => ({
@@ -322,6 +358,23 @@ const contributionsFromSavings = (savings = []) => {
   return map;
 };
 
+const normalizeDebtRow = (row) => ({
+  id: row.id || uid(),
+  name: row.name || "",
+  ...moneyRow(row, ["balance", "rate", "minPayment"]),
+});
+
+const normalizeSinkingRow = (row) => ({
+  id: row.id || uid(),
+  name: row.name || "",
+  ...moneyRow(row, ["annualAmount", "saved"]),
+});
+
+const normalizeHoldings = (holdings = {}) => ({
+  amd: +holdings.amd || 0,
+  usd: +holdings.usd || 0,
+});
+
 export const normalizeFinance = (finance = {}) => {
   const exchange = normalizeExchange(finance.exchange);
 
@@ -365,12 +418,52 @@ export const normalizeFinance = (finance = {}) => {
     savings: Array.isArray(finance.savings)
       ? finance.savings.map(normalizeSavingsRow)
       : DEFAULT_SAVINGS_FUNDS,
+    debts: Array.isArray(finance.debts) ? finance.debts.map(normalizeDebtRow) : [],
+    sinkingFunds: Array.isArray(finance.sinkingFunds)
+      ? finance.sinkingFunds.map(normalizeSinkingRow)
+      : [],
+    holdings: normalizeHoldings(finance.holdings),
+    netWorthHistory:
+      finance.netWorthHistory && typeof finance.netWorthHistory === "object"
+        ? finance.netWorthHistory
+        : {},
     expenses: (finance.expenses || []).map((expense) =>
       normalizeExpense(expense, exchange),
     ),
     categories: withDefaultCategories(finance.categories),
     exchange,
   };
+};
+
+// Net worth = liquid assets (saved across funds + sinking funds + held cash) minus debts.
+export const netWorthSummary = (finance) => {
+  const model = finance.months ? finance : normalizeFinance(finance);
+  const fundsSaved = sum(model.savings, "saved");
+  const sinkingSaved = sum(model.sinkingFunds, "saved");
+  const heldCash = model.holdings.amd + model.holdings.usd * model.exchange.rate;
+  const assets = fundsSaved + sinkingSaved + heldCash;
+  const debt = sum(model.debts, "balance");
+  return { assets, debt, net: assets - debt, fundsSaved, sinkingSaved, heldCash };
+};
+
+// Per-month series for trend charts: spent / net / income across recent months.
+export const monthlySeries = (finance, count = 6) => {
+  const model = finance.months ? finance : normalizeFinance(finance);
+  const keys = Object.keys(model.months).sort();
+  const recent = keys.slice(-count);
+  return recent.map((key) => {
+    const t = financeTotals(model, key);
+    const [y, m] = key.split("-").map(Number);
+    return {
+      month: key,
+      label: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "short" }),
+      income: t.income,
+      spent: t.spent,
+      net: t.net,
+      essential: t.essentialSpent,
+      discretionary: t.discretionarySpent,
+    };
+  });
 };
 
 // Deep-ish copy of a month setup with fresh row ids so editing a carried-forward
@@ -455,19 +548,27 @@ export const financeTotals = (finance, monthKeyArg) => {
   const typeByName = new Map(
     normalized.categories.map((c) => [String(c.name).toLowerCase(), c.type]),
   );
+  const essentialById = new Map(normalized.categories.map((c) => [c.id, c.essential]));
+  const essentialByName = new Map(
+    normalized.categories.map((c) => [String(c.name).toLowerCase(), c.essential]),
+  );
   let spent = 0;
   let fixedSpent = 0;
+  let essentialSpent = 0;
   normalized.expenses
     .filter((expense) => (expense.date || "").startsWith(key))
     .forEach((expense) => {
       const amount = expenseAmountAMD(expense, normalized.exchange);
       spent += amount;
-      const type =
-        typeById.get(expense.categoryId) ||
-        typeByName.get(String(expense.categoryName || "").toLowerCase());
+      const nameKey = String(expense.categoryName || "").toLowerCase();
+      const type = typeById.get(expense.categoryId) || typeByName.get(nameKey);
       if (type === "fixed") fixedSpent += amount;
+      const essential =
+        essentialById.get(expense.categoryId) ?? essentialByName.get(nameKey) ?? false;
+      if (essential) essentialSpent += amount;
     });
   const variableSpent = spent - fixedSpent;
+  const discretionarySpent = spent - essentialSpent;
 
   const saved = sum(normalized.savings, "saved");
   const monthlyGoal = normalized.savings.reduce((total, fund) => {
@@ -478,6 +579,7 @@ export const financeTotals = (finance, monthKeyArg) => {
   const net = income - spent;
   const availableToSave = Math.max(0, net);
   const planBalance = incomePlan - fixedPlan - variablePlan - monthlyGoal;
+  const savingsRate = income > 0 ? Math.round((availableToSave / income) * 100) : 0;
 
   return {
     monthKey: key,
@@ -487,8 +589,11 @@ export const financeTotals = (finance, monthKeyArg) => {
     net,
     netThisMonth: net,
     availableToSave,
+    savingsRate,
     fixed: fixedSpent,
     variableManual: variableSpent,
+    essentialSpent,
+    discretionarySpent,
     // monthly plan (budget)
     incomePlan,
     fixedPlan,
@@ -584,42 +689,25 @@ export const allocationSuggestion = (income, savings = []) => {
   const spending = Math.min(300000, amount);
   const flex = Math.min(50000, Math.max(0, amount - spending));
   const goalBudget = Math.max(0, amount - spending - flex);
-  const plan = savingsPlan({ savings }).map((fund) => ({
-    ...fund,
-    key: fund.name.toLowerCase(),
-  }));
+
+  // Strict priority waterfall: fund the highest-priority unfilled goal to its
+  // remaining gap before any money flows to the next. One goal finishes fast,
+  // then the whole budget rolls down — instead of trickling into all at once.
+  const plan = savingsPlan({ savings })
+    .map((fund) => ({ ...fund, key: fund.name.toLowerCase() }))
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
 
   const buckets = plan.map((fund) => ({ fund, amount: 0 }));
   let remainingBudget = goalBudget;
 
-  const assignTo = (match, cap) => {
-    const bucket = buckets.find(({ fund }) => match(fund.key));
-    if (!bucket || remainingBudget <= 0) return 0;
+  buckets.forEach((bucket) => {
+    if (remainingBudget <= 0) return;
     const gap = Math.max(0, bucket.fund.remaining);
-    if (gap <= 0) return 0;
-    const allocation = Math.min(remainingBudget, cap, gap);
+    if (gap <= 0) return;
+    const allocation = Math.min(remainingBudget, gap);
     bucket.amount += allocation;
     remainingBudget -= allocation;
-    return allocation;
-  };
-
-  assignTo((name) => name.includes("emergency"), 100000);
-  assignTo((name) => name.includes("fiance") || name.includes("relocation"), 150000);
-  assignTo((name) => name.includes("support"), 100000);
-  assignTo((name) => name.includes("house") || name.includes("down payment"), remainingBudget);
-  assignTo((name) => name.includes("investment"), remainingBudget);
-
-  const stillOpen = buckets.filter(({ fund }) => fund.remaining > 0 && !fund.key.includes("house") && !fund.key.includes("down payment"));
-  if (remainingBudget > 0 && stillOpen.length) {
-    const totalGap = stillOpen.reduce((total, { fund }) => total + fund.remaining, 0) || stillOpen.length;
-    stillOpen.forEach((bucket, index) => {
-      const share = index === stillOpen.length - 1
-        ? remainingBudget
-        : Math.round(remainingBudget * (bucket.fund.remaining / totalGap));
-      bucket.amount += share;
-      remainingBudget -= share;
-    });
-  }
+  });
 
   return [
     {
