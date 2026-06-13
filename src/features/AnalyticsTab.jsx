@@ -11,6 +11,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -22,6 +23,8 @@ import { C, CHART_COLORS, STATUSES, STATUS_COLOR } from "../core/constants";
 import {
   addDays,
   dateRange,
+  dayName,
+  localDate,
   monthKey,
   parseDate,
   startOfWeekISO,
@@ -40,7 +43,7 @@ import {
   savingsPlan,
 } from "../core/finance";
 import { askDataQuestion, askFinanceAnalyticsQuestion } from "../core/groq";
-import { chartTakeaway } from "../core/coach";
+import { chartTakeaway, habitConsistency, top3HitRate, trackInsightLines } from "../core/coach";
 
 export function AnalyticsTab({ tasks, habits, goals, finance }) {
   const financeModel = useMemo(() => normalizeFinance(finance), [finance]);
@@ -95,50 +98,121 @@ export function AnalyticsTab({ tasks, habits, goals, finance }) {
       {/* ── AI Data Assistant ─────────────────────────────────── */}
       <AiAssistant tasks={tasks} habits={habits} goals={goals} finance={financeModel} totals={totals} exchange={financeModel.exchange} />
 
-      {/* ── Finance Analytics ─────────────────────────────────── */}
-      {/* ── Tracker Analytics ─────────────────────────────────── */}
+      {/* ── Tracker Analytics (redesigned: action-driving) ────── */}
       <div className="analytics-section">
         <SectionTitle title="Tracker Analytics" icon={<TrendingUp />} />
-        <div className="charts-grid">
-          <ChartCard title="Task Status">
-            <PieChart>
-              <Pie data={taskStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={82}>
-                {taskStatus.map((e, i) => <Cell key={e.name} fill={STATUS_COLOR[e.name] || CHART_COLORS[i]} />)}
-              </Pie>
-              <Tooltip content={<ChartTip />} />
-              <Legend />
-            </PieChart>
-          </ChartCard>
-          <ChartCard title="Habit Completion This Month">
-            <BarChart data={habitData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-              <XAxis type="number" tick={{ fill: C.muted }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: C.muted }} width={120} />
-              <Tooltip content={<ChartTip />} />
-              <Bar dataKey="Done" fill={C.amber} radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ChartCard>
-          <ChartCard title="Goal Progress">
-            <BarChart data={goalData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-              <XAxis type="number" domain={[0, 100]} tick={{ fill: C.muted }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: C.muted }} width={120} />
-              <Tooltip content={<ChartTip />} />
-              <Bar dataKey="Progress" fill={C.purple} radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ChartCard>
-          <ChartCard title="8 Week Trend" className="chart-full">
-            <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-              <XAxis dataKey="week" tick={{ fill: C.muted }} />
-              <YAxis tick={{ fill: C.muted }} />
-              <Tooltip content={<ChartTip />} />
-              <Legend />
-              <Line type="monotone" dataKey="Tasks Done" stroke={C.green} strokeWidth={3} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="Habit Days"  stroke={C.blue}  strokeWidth={3} dot={{ r: 3 }} />
-            </LineChart>
-          </ChartCard>
-        </div>
+        <TrackAnalytics tasks={tasks} habits={habits} goals={goals} />
+      </div>
+    </div>
+  );
+}
+
+// Plain-language insights + habit heatmap + Top-3 hit-rate + momentum.
+// Built on leading indicators (consistency, follow-through) not vanity totals.
+function TrackAnalytics({ tasks, habits, goals }) {
+  const insights = useMemo(() => trackInsightLines({ habits, tasks, goals }), [habits, tasks, goals]);
+  const t3 = useMemo(() => top3HitRate(tasks, 30), [tasks]);
+
+  // 7-day habit-completion momentum (% of habits done each day).
+  const momentum = useMemo(() => {
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = localDate(addDays(new Date(), -(13 - i)));
+      const done = habits.filter((h) => h.log?.[d]).length;
+      return { day: d.slice(5), pct: habits.length ? Math.round((done / habits.length) * 100) : 0 };
+    });
+  }, [habits]);
+
+  return (
+    <>
+      <div className="insight-strip">
+        {insights.map((line, i) => (
+          <p key={i}>💡 {line}</p>
+        ))}
+      </div>
+
+      <Card className="hm-card">
+        <div className="card-head"><h3>Habit consistency — last 12 weeks</h3></div>
+        {habits.length ? (
+          <div className="hm-list">
+            {habits.map((h) => (
+              <HabitHeatmap key={h.id} habit={h} />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-inline">Add habits to see your consistency grid.</div>
+        )}
+      </Card>
+
+      <div className="track-an-grid">
+        <Card className="t3-card">
+          <div className="card-head"><h3>Top-3 follow-through</h3></div>
+          <div className="t3-big" style={{ color: t3.allDonePct >= 70 ? C.green : t3.allDonePct >= 40 ? C.amber : C.red }}>
+            {t3.trackedDays ? `${t3.allDonePct}%` : "—"}
+          </div>
+          <p className="t3-sub">
+            {t3.trackedDays
+              ? `of days you finished all your Top-3 (${t3.allDone}/${t3.trackedDays} days, last 30). This is the truest "did what mattered" signal.`
+              : "Star up to 3 tasks a day as your Top-3 — your follow-through rate will show here."}
+          </p>
+        </Card>
+
+        <ChartCard title="14-day momentum (habits done)">
+          <LineChart data={momentum}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+            <XAxis dataKey="day" tick={{ fill: C.muted, fontSize: 10 }} />
+            <YAxis domain={[0, 100]} tick={{ fill: C.muted, fontSize: 10 }} tickFormatter={(v) => `${v}%`} width={36} />
+            <Tooltip content={<ChartTip />} />
+            <ReferenceLine y={80} stroke={C.green} strokeDasharray="4 4" strokeOpacity={0.6} />
+            <Line type="monotone" dataKey="pct" stroke={C.blue} strokeWidth={3} dot={{ r: 2 }} />
+          </LineChart>
+        </ChartCard>
+      </div>
+
+      {goals.length > 0 && (
+        <Card className="goalpace-card">
+          <div className="card-head"><h3>Goal pace</h3></div>
+          <div className="goalpace-list">
+            {goals.map((g) => {
+              const days = g.target ? Math.ceil((parseDate(g.target) - new Date()) / 86400000) : null;
+              return (
+                <div className="goalpace-row" key={g.id}>
+                  <div className="goalpace-top">
+                    <strong>{g.title}</strong>
+                    <span>{days != null ? (days >= 0 ? `${days} days left` : `${-days} days over`) : "no date"}</span>
+                  </div>
+                  <div className="goalpace-track"><i style={{ width: `${Math.max(2, +g.progress || 0)}%` }} /></div>
+                  <em>{+g.progress || 0}% done{g.target ? ` · target ${g.target}` : ""}</em>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+// GitHub-style consistency grid for one habit (last ~12 weeks).
+function HabitHeatmap({ habit }) {
+  const DAYS = 84;
+  const cells = useMemo(
+    () => Array.from({ length: DAYS }, (_, i) => {
+      const d = localDate(addDays(new Date(), -(DAYS - 1 - i)));
+      return { d, on: Boolean(habit.log?.[d]) };
+    }),
+    [habit],
+  );
+  const c = habitConsistency(habit, 30);
+  return (
+    <div className="hm-row">
+      <div className="hm-label">
+        <strong>{habit.name}</strong>
+        <span>{c.pct}% · last 30 days</span>
+      </div>
+      <div className="hm-grid">
+        {cells.map((cell) => (
+          <i key={cell.d} className={cell.on ? "on" : ""} title={`${cell.d}${cell.on ? " ✓" : ""}`} />
+        ))}
       </div>
     </div>
   );

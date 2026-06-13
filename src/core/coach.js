@@ -3,7 +3,86 @@
 // non-judgmental coaching copy — no AI dependency, so it always works. AI is an
 // optional enrichment layered on top elsewhere.
 
+import { addDays, dayName, localDate, parseDate } from "./date";
+
 const amd = (n) => `${Math.round(+n || 0).toLocaleString()} AMD`;
+
+// ── Productivity analytics helpers (pure) ──────────────────────────────────
+const lastNDates = (n) =>
+  Array.from({ length: n }, (_, i) => localDate(addDays(new Date(), -(n - 1 - i))));
+
+// % of the last `days` a habit was done.
+export function habitConsistency(habit, days = 30) {
+  const dates = lastNDates(days);
+  const done = dates.filter((d) => habit.log?.[d]).length;
+  return { done, days, pct: Math.round((done / days) * 100) };
+}
+
+// Completion % per weekday across all habits over the window.
+export function weekdayCompletion(habits = [], days = 56) {
+  const dates = lastNDates(days);
+  const order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const by = {};
+  dates.forEach((d) => {
+    const wd = dayName(parseDate(d));
+    by[wd] = by[wd] || { done: 0, total: 0 };
+    habits.forEach((h) => {
+      by[wd].total += 1;
+      if (h.log?.[d]) by[wd].done += 1;
+    });
+  });
+  return order
+    .filter((wd) => by[wd])
+    .map((wd) => ({ day: wd, total: by[wd].total, done: by[wd].done, pct: by[wd].total ? Math.round((by[wd].done / by[wd].total) * 100) : 0 }));
+}
+
+// Top-3 MIT follow-through over the last `days` (only days that had MITs count).
+export function top3HitRate(tasks = [], days = 30) {
+  const dates = new Set(lastNDates(days));
+  const byDay = {};
+  tasks.forEach((t) => {
+    if (!t.mit || !dates.has(t.date)) return;
+    byDay[t.date] = byDay[t.date] || { total: 0, done: 0 };
+    byDay[t.date].total += 1;
+    if (t.status === "Done") byDay[t.date].done += 1;
+  });
+  const daysList = Object.values(byDay);
+  const trackedDays = daysList.length;
+  const allDone = daysList.filter((d) => d.done === d.total).length;
+  return { trackedDays, allDone, allDonePct: trackedDays ? Math.round((allDone / trackedDays) * 100) : 0 };
+}
+
+// Plain-language, action-prompting insight lines for the analytics header.
+export function trackInsightLines({ habits = [], tasks = [], goals = [] } = {}) {
+  const lines = [];
+  const anyLog = habits.some((h) => Object.keys(h.log || {}).length > 0);
+
+  if (anyLog) {
+    const wd = weekdayCompletion(habits).filter((r) => r.total > 0);
+    if (wd.length > 1) {
+      const best = wd.reduce((a, b) => (b.pct > a.pct ? b : a));
+      const worst = wd.reduce((a, b) => (b.pct < a.pct ? b : a));
+      if (best.day !== worst.day && best.pct !== worst.pct) {
+        lines.push(`You hit ${best.pct}% of ${best.day}s but only ${worst.pct}% of ${worst.day}s — protect ${worst.day}.`);
+      }
+    }
+    // Habit formation progress vs the 66-day median (Lally 2010).
+    const top = habits
+      .map((h) => ({ name: h.name, n: Object.values(h.log || {}).filter(Boolean).length }))
+      .sort((a, b) => b.n - a.n)[0];
+    if (top && top.n > 0) {
+      const pct = Math.min(100, Math.round((top.n / 66) * 100));
+      lines.push(`${top.name} is ${top.n} day${top.n === 1 ? "" : "s"} in — about ${pct}% to automatic (66-day median). One miss won't reset it.`);
+    }
+    const t3 = top3HitRate(tasks);
+    if (t3.trackedDays >= 3) {
+      lines.push(`You complete all your Top-3 on ${t3.allDonePct}% of days — the single best signal you did what mattered.`);
+    }
+  } else {
+    lines.push("Start checking off habits today — within a week your consistency patterns and best/worst days show up here.");
+  }
+  return lines;
+}
 
 // One plain-language sentence per chart. `kind` selects the template; `d` is a
 // small data bag with already-computed numbers.

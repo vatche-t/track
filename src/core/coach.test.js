@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { chartTakeaway, buildInsights } from "./coach.js";
+import { chartTakeaway, buildInsights, habitConsistency, top3HitRate, trackInsightLines } from "./coach.js";
+import { localDate, addDays } from "./date.js";
 
 describe("chartTakeaway", () => {
   it("forecast: over-pace cites projection, cap, and % over", () => {
@@ -26,6 +27,33 @@ describe("chartTakeaway", () => {
   });
   it("variance: all within plan", () => {
     expect(chartTakeaway("variance", { overCount: 0, total: 4 })).toMatch(/within plan/i);
+  });
+});
+
+describe("track analytics helpers", () => {
+  const today = localDate();
+  const yesterday = localDate(addDays(new Date(), -1));
+
+  it("habitConsistency = % of last N days done", () => {
+    const h = { log: { [today]: true, [yesterday]: true } };
+    expect(habitConsistency(h, 10).done).toBe(2);
+    expect(habitConsistency(h, 10).pct).toBe(20);
+  });
+
+  it("top3HitRate counts only days that had MITs", () => {
+    const tasks = [
+      { mit: true, date: today, status: "Done" },
+      { mit: true, date: today, status: "Done" },
+      { mit: true, date: yesterday, status: "To Do" },
+    ];
+    const r = top3HitRate(tasks, 30);
+    expect(r.trackedDays).toBe(2);
+    expect(r.allDone).toBe(1); // only `today` had all MITs done
+    expect(r.allDonePct).toBe(50);
+  });
+
+  it("trackInsightLines prompts to start when there's no log", () => {
+    expect(trackInsightLines({ habits: [{ log: {} }], tasks: [], goals: [] })[0]).toMatch(/start checking off/i);
   });
 });
 
