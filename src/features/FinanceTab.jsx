@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   BarChart3,
@@ -15,9 +16,12 @@ import {
   RefreshCw,
   RotateCcw,
   Scale,
+  Send,
+  Sparkles,
   Target,
   Trash2,
   Wallet,
+  X,
 } from "lucide-react";
 import {
   Area,
@@ -31,10 +35,9 @@ import {
   YAxis,
 } from "recharts";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
-import { Modal } from "../components/Modal";
 import { FinanceAnalyticsPanel } from "./AnalyticsTab";
 import {
-  GROQ_MODEL,
+  askFinanceAnalyticsQuestion,
   explainWaterfall,
   getFinancialAdvice,
   getSpendNudge,
@@ -505,9 +508,9 @@ export function FinanceTab({ finance, setFinance }) {
             <Button
               variant="primary"
               onClick={() => setAdviceOpen(true)}
-              title="Get AI financial advice"
+              title="Ask Kai about your finances"
             >
-              <BrainCircuit size={15} /> AI Advice
+              <Sparkles size={15} /> Ask Kai
             </Button>
             <Button onClick={refreshRate} disabled={rateBusy} title="Refresh USD to AMD rate">
               <RefreshCw size={15} /> {rateBusy ? "Updating" : "Rate"}
@@ -527,12 +530,14 @@ export function FinanceTab({ finance, setFinance }) {
         }
       />
 
-      <AiAdviceModal
+      <FinanceAiPanel
         open={adviceOpen}
         onClose={() => setAdviceOpen(false)}
         totals={totals}
         model={model}
         setFinance={setFinance}
+        displayCurrency={displayCurrency}
+        exchange={exchange}
       />
 
       {financeView === "analytics" ? (
@@ -1349,14 +1354,57 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
   );
 }
 
-function AiAdviceModal({ open, onClose, totals, model, setFinance }) {
-  const advice = model.ai?.advice || "";
-  const adviceAt = model.ai?.generatedAt?.advice || "";
+// Docked right-side finance assistant. Free-form questions are answered from the
+// live finance snapshot via askFinanceAnalyticsQuestion; "Full review" runs the
+// heavier getFinancialAdvice pass and persists it so it survives reloads.
+function FinanceAiPanel({ open, onClose, totals, model, setFinance, displayCurrency, exchange }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const ask = async () => {
+  const scrollRef = useRef(null);
+  const series = useMemo(() => monthlySeries(model, 6), [model]);
+
+  // Data-driven starter prompts so the empty state isn't a blank box.
+  const topCategory = useMemo(() => {
+    const map = {};
+    currentMonthExpenses(model).forEach((e) => {
+      if ((e.amountAMD || 0) <= 0) return; // skip reimbursements
+      map[e.categoryName || "Other"] = (map[e.categoryName || "Other"] || 0) + (e.amountAMD || 0);
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0];
+  }, [model]);
+
+  const suggestions = [
+    "Am I on track to stay under my cap this month?",
+    "What did I overspend on?",
+    topCategory && `Why is ${topCategory} so high this month?`,
+    "How much can I realistically save this month?",
+  ].filter(Boolean);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, busy]);
+
+  const send = async (question) => {
+    const q = (question ?? input).trim();
+    if (!q || busy) return;
+    setInput("");
+    setMessages((m) => [...m, { role: "user", text: q }]);
     setBusy(true);
-    setErr("");
+    try {
+      const answer = await askFinanceAnalyticsQuestion(q, { finance: model, totals, exchange, series });
+      setMessages((m) => [...m, { role: "ai", text: answer }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ai", text: `Couldn't answer that right now (${e.message}).`, error: true }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fullReview = async () => {
+    if (busy) return;
+    setMessages((m) => [...m, { role: "user", text: "Give me a full financial review." }]);
+    setBusy(true);
     try {
       const text = await getFinancialAdvice({
         totals,
@@ -1364,44 +1412,99 @@ function AiAdviceModal({ open, onClose, totals, model, setFinance }) {
         goals: [],
         exchange: model.exchange,
         expenses: model.expenses,
-        series: monthlySeries(model, 6),
+        series,
       });
       persistAi(setFinance, "advice", text);
+      setMessages((m) => [...m, { role: "ai", text }]);
     } catch (e) {
-      setErr(e.message);
+      setMessages((m) => [...m, { role: "ai", text: `Couldn't run the review (${e.message}).`, error: true }]);
     } finally {
       setBusy(false);
     }
   };
+
   return (
-    <Modal open={open} onClose={onClose} title="AI Financial Advice">
-      <div className="ai-advice-modal">
-        <div className="ai-advice-modal-head">
-          <span>
-            {advice && adviceAt
-              ? `Generated ${timeAgo(adviceAt)} - Groq ${GROQ_MODEL}`
-              : "Sends your current finance snapshot to Groq."}
-          </span>
-          <Button variant="primary" onClick={ask} disabled={busy}>
-            {busy ? "Thinking..." : <><RefreshCw size={14} /> {advice ? "Refresh" : "Get Advice"}</>}
-          </Button>
-        </div>
-        {err && <div className="rate-error">{err}</div>}
-        {advice ? (
-          <div className="ai-advice">
-            {advice.split("\n").filter(Boolean).map((line, i) => (
-              <p key={i}>{line}</p>
-            ))}
-          </div>
-        ) : (
-          !busy && (
-            <div className="empty-inline">
-              Click "Get Advice" for AI-powered suggestions based on your income, expenses, and goals.
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            className="ai-panel-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={onClose}
+          />
+          <motion.aside
+            className="ai-panel"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            role="dialog"
+            aria-label="Kai finance assistant"
+          >
+            <header className="ai-panel-head">
+              <div>
+                <h3><Sparkles size={16} /> Kai</h3>
+                <span>Answers from your live finance data</span>
+              </div>
+              <button className="icon-btn" onClick={onClose} title="Close"><X size={18} /></button>
+            </header>
+
+            <div className="ai-panel-body" ref={scrollRef}>
+              {messages.length === 0 && (
+                <div className="ai-panel-intro">
+                  <p>Ask me anything about your money this month — spending, pace, savings, or budget vs. actual.</p>
+                  <div className="ai-chips">
+                    {suggestions.map((s) => (
+                      <button key={s} onClick={() => send(s)}>{s}</button>
+                    ))}
+                  </div>
+                  <Button variant="outline" onClick={fullReview} style={{ marginTop: 12 }}>
+                    <BrainCircuit size={14} /> Full financial review
+                  </Button>
+                </div>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`ai-msg ${m.role}${m.error ? " error" : ""}`}>
+                  {m.text.split("\n").filter(Boolean).map((line, j) => (
+                    <p key={j}>{line.replace(/^[-*]\s*/, "• ")}</p>
+                  ))}
+                </div>
+              ))}
+              {busy && (
+                <div className="ai-msg ai typing"><span /><span /><span /></div>
+              )}
             </div>
-          )
-        )}
-      </div>
-    </Modal>
+
+            {messages.length > 0 && (
+              <div className="ai-panel-quick">
+                {suggestions.slice(0, 2).map((s) => (
+                  <button key={s} onClick={() => send(s)} disabled={busy}>{s}</button>
+                ))}
+              </div>
+            )}
+
+            <form
+              className="ai-panel-input"
+              onSubmit={(e) => { e.preventDefault(); send(); }}
+            >
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask about your spending…"
+                aria-label="Ask Kai"
+              />
+              <button type="submit" disabled={busy || !input.trim()} title="Send">
+                <Send size={16} />
+              </button>
+            </form>
+            <p className="ai-panel-foot">Kai uses only your tracked data. Not professional financial advice.</p>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
