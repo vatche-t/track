@@ -6,8 +6,9 @@
 import { createClient } from "@supabase/supabase-js";
 
 const SUPA_URL = process.env.SUPABASE_URL || "https://iuuvgmdvdohlurqhnxui.supabase.co";
-// Single-user app: fall back to the known user id so a missing env var can't break it.
-const UID = process.env.TRACKER_USER_ID || "d5538d66-df67-412c-80d8-bbe0475b76d6";
+// Single-user app: the user id is fixed and not secret, so hardcode it. (The env
+// var was getting truncated to an invalid UUID, breaking every write.)
+const UID = "d5538d66-df67-412c-80d8-bbe0475b76d6";
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.APP_URL || "https://track.vatche.me";
 const TG = `https://api.telegram.org/bot${TOKEN}`;
