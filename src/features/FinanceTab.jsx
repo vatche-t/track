@@ -51,6 +51,7 @@ import { C } from "../core/constants";
 import { buildInsights, chartTakeaway } from "../core/coach";
 import { addDays, dayName, localDate, monthKey, parseDate, submitOnEnter, sum, uid } from "../core/date";
 import {
+  ACCOUNT_ROLES,
   AMD,
   MONEY_CURRENCIES,
   USD,
@@ -1994,6 +1995,18 @@ function WealthPanel({ model, displayCurrency, exchange, updateFinance }) {
   const setHolding = (key, value) =>
     updateFinance((p) => ({ ...p, holdings: { ...p.holdings, [key]: Math.max(0, Math.round(+value || 0)) } }));
 
+  const accounts = model.accounts || [];
+  const addAccount = () =>
+    updateFinance((p) => ({ ...p, accounts: [...(p.accounts || []), { id: uid(), name: "", bank: "", currency: AMD, balance: 0, role: "" }] }));
+  const setAccount = (id, patch) =>
+    updateFinance((p) => ({ ...p, accounts: (p.accounts || []).map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
+  const delAccount = (id) =>
+    updateFinance((p) => ({ ...p, accounts: (p.accounts || []).filter((a) => a.id !== id) }));
+  const accountsTotal = accounts.reduce(
+    (s, a) => s + (a.currency === USD ? (+a.balance || 0) * rate : (+a.balance || 0)),
+    0,
+  );
+
   const usdExposurePct = nw.heldCash > 0 ? Math.round(((model.holdings.usd * rate) / nw.heldCash) * 100) : 0;
   const sortedDebts = [...model.debts].sort((a, b) => (b.rate || 0) - (a.rate || 0));
 
@@ -2005,6 +2018,36 @@ function WealthPanel({ model, displayCurrency, exchange, updateFinance }) {
         <Stat label="Debt" value={displayMoney(nw.debt, displayCurrency, exchange)} color={nw.debt > 0 ? C.red : C.muted} />
         <Stat label="Saved in funds" value={displayMoney(nw.fundsSaved, displayCurrency, exchange)} color={C.purple} />
       </div>
+
+      <Card className="money-section accounts-card" style={{ borderTopColor: C.green }}>
+        <div className="card-head">
+          <div>
+            <h3 style={{ color: C.green }}><Landmark size={18} /> Accounts</h3>
+            <span className="accounts-sub">Your cards & accounts and what each is for</span>
+          </div>
+          <div className="accounts-total">
+            <strong>{displayMoney(accountsTotal, displayCurrency, exchange)}</strong>
+            <span>total cash</span>
+          </div>
+        </div>
+        <div className="stack">
+          {accounts.map((a) => (
+            <div className="account-row" key={a.id}>
+              <Input value={a.name} onChange={(name) => setAccount(a.id, { name })} placeholder="Account / card name" />
+              <div className="segmented account-cur">
+                {[AMD, USD].map((cur) => (
+                  <button key={cur} type="button" className={a.currency === cur ? "active" : ""} onClick={() => setAccount(a.id, { currency: cur })}>{cur}</button>
+                ))}
+              </div>
+              <MoneyInput value={a.balance} onChange={(v) => setAccount(a.id, { balance: +String(v).replace(/[^\d.]/g, "") || 0 })} currency={a.currency} style={{ textAlign: "right" }} />
+              <Input value={a.role} onChange={(role) => setAccount(a.id, { role })} options={["", ...ACCOUNT_ROLES]} />
+              <button className="icon-btn danger" onClick={() => delAccount(a.id)}><Trash2 size={14} /></button>
+            </div>
+          ))}
+          {!accounts.length && <div className="empty-inline">Add your bank cards/accounts so the app can map money to the right place.</div>}
+        </div>
+        <button className="goal-add-btn" onClick={addAccount}><Plus size={15} /> Add account</button>
+      </Card>
 
       <div className="finance-grid">
         <Card className="money-section" style={{ borderTopColor: C.red }}>

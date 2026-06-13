@@ -374,6 +374,18 @@ const normalizeSinkingRow = (row) => ({
   ...moneyRow(row, ["annualAmount", "saved"]),
 });
 
+// Bank accounts / cards the user actually holds. Each has its own currency and a
+// "role" (what job it does) so the app can map money to the right place.
+export const ACCOUNT_ROLES = ["Daily spending", "Bills", "Savings", "Emergency", "USD hedge", "Travel", "Other"];
+const normalizeAccount = (a = {}) => ({
+  id: a.id || uid(),
+  name: a.name || "",
+  bank: a.bank || "",
+  currency: a.currency === USD ? USD : AMD,
+  balance: Math.max(0, +a.balance || 0),
+  role: a.role || "",
+});
+
 const normalizeHoldings = (holdings = {}) => ({
   amd: +holdings.amd || 0,
   usd: +holdings.usd || 0,
@@ -439,6 +451,7 @@ export const normalizeFinance = (finance = {}) => {
     savings: Array.isArray(finance.savings)
       ? dedupeById(finance.savings.map(normalizeSavingsRow))
       : DEFAULT_SAVINGS_FUNDS,
+    accounts: Array.isArray(finance.accounts) ? dedupeById(finance.accounts.map(normalizeAccount)) : [],
     debts: Array.isArray(finance.debts) ? finance.debts.map(normalizeDebtRow) : [],
     sinkingFunds: Array.isArray(finance.sinkingFunds)
       ? finance.sinkingFunds.map(normalizeSinkingRow)
@@ -461,10 +474,15 @@ export const netWorthSummary = (finance) => {
   const model = finance.months ? finance : normalizeFinance(finance);
   const fundsSaved = sum(model.savings, "saved");
   const sinkingSaved = sum(model.sinkingFunds, "saved");
-  const heldCash = model.holdings.amd + model.holdings.usd * model.exchange.rate;
+  // Cash in actual bank accounts/cards, converted to AMD, plus any legacy FX holdings.
+  const accountsCash = (model.accounts || []).reduce(
+    (s, a) => s + (a.currency === USD ? (+a.balance || 0) * model.exchange.rate : (+a.balance || 0)),
+    0,
+  );
+  const heldCash = model.holdings.amd + model.holdings.usd * model.exchange.rate + accountsCash;
   const assets = fundsSaved + sinkingSaved + heldCash;
   const debt = sum(model.debts, "balance");
-  return { assets, debt, net: assets - debt, fundsSaved, sinkingSaved, heldCash };
+  return { assets, debt, net: assets - debt, fundsSaved, sinkingSaved, heldCash, accountsCash };
 };
 
 // Proactive nudge: is today's logged spend already past the adaptive safe daily?
