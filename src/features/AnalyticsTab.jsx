@@ -422,27 +422,36 @@ function BudgetVarianceBoard({ rows, exchange }) {
     <Card className="finance-panel">
       <div className="finance-panel-head">
         <div>
-          <span className="eyebrow">plan control</span>
-          <h3>Budget variance</h3>
+          <span className="eyebrow">plan vs actual</span>
+          <h3>How you're tracking to plan</h3>
         </div>
       </div>
       <p className="chart-takeaway">{chartTakeaway("variance", { overCount, total: rows.length })}</p>
-      <div className="variance-list">
+      <div className="bullet-list">
         {rows.map((row) => {
           const variance = row.actual - row.budget;
-          const max = Math.max(1, row.actual, row.budget);
-          const budgetWidth = Math.max(4, Math.round((row.budget / max) * 100));
-          const actualWidth = Math.max(4, Math.round((row.actual / max) * 100));
+          const ratio = row.budget > 0 ? row.actual / row.budget : (row.actual > 0 ? 2 : 0);
           const favorable = row.direction === "higher" ? variance >= 0 : variance <= 0;
+          // Green = comfortably favorable, amber = close to plan, red = unfavorable.
+          const near = Math.abs(ratio - 1) <= 0.1;
+          const status = favorable ? (near ? "amber" : "green") : "red";
+          const fill = Math.max(4, Math.min(100, Math.round(ratio * 100)));
+          const up = variance > 0;
           return (
-            <div className="variance-row" key={row.name}>
-              <div className="variance-title">
+            <div className="bullet-row" key={row.name}>
+              <div className="bullet-head">
                 <span>{row.name}</span>
-                <b className={favorable ? "good" : "bad"}>{displayMoney(variance, AMD, exchange)}</b>
+                <b className={favorable ? "good" : "bad"}>
+                  {variance !== 0 && (up ? "▲ " : "▼ ")}{displayMoney(Math.abs(variance), AMD, exchange)}
+                </b>
               </div>
-              <div className="variance-bars">
-                <i className="budget" style={{ width: `${budgetWidth}%` }}><span>Plan</span></i>
-                <i className="actual" style={{ width: `${actualWidth}%` }}><span>Actual</span></i>
+              <div className="bullet-track" title={`Plan ${displayMoney(row.budget, AMD, exchange)} · Actual ${displayMoney(row.actual, AMD, exchange)}`}>
+                <i className={`bullet-fill ${status}`} style={{ width: `${fill}%` }} />
+                <span className="bullet-tick" style={{ left: "100%" }} />
+              </div>
+              <div className="bullet-meta">
+                <span>Actual {displayMoney(row.actual, AMD, exchange)}</span>
+                <span>Plan {displayMoney(row.budget, AMD, exchange)}</span>
               </div>
             </div>
           );
