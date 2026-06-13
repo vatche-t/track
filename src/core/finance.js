@@ -202,10 +202,13 @@ export const ensureStarterExpenses = (finance = {}) => {
   const repairedSavings = savings.map((fund) => {
     const match = defaultByName.get(String(fund.name || "").toLowerCase());
     if (!match) return fund;
+    // Only backfill values that are actually missing — never override an explicit
+    // user value, including an explicit 0 (e.g. a goal funded by a lump sum, not
+    // monthly). Previously `> 0` clobbered a deliberate 0 back to the default.
     return {
       ...fund,
-      target: +fund.target > 0 ? fund.target : match.target,
-      monthly: +fund.monthly > 0 ? fund.monthly : match.monthly,
+      target: fund.target == null ? match.target : fund.target,
+      monthly: fund.monthly == null ? match.monthly : fund.monthly,
     };
   });
   const savingsNames = new Set(repairedSavings.map((fund) => String(fund.name || "").toLowerCase()));
@@ -376,6 +379,17 @@ const normalizeHoldings = (holdings = {}) => ({
   usd: +holdings.usd || 0,
 });
 
+// Keep the first occurrence of each id; drop later duplicates. Guards against a
+// merge that appended funds sharing an id (which breaks React keys + persistence).
+const dedupeById = (rows = []) => {
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+};
+
 export const normalizeFinance = (finance = {}) => {
   const exchange = normalizeExchange(finance.exchange);
 
@@ -415,9 +429,10 @@ export const normalizeFinance = (finance = {}) => {
     variable: active.variable,
     contributions: active.contributions,
     ai: active.ai,
-    // Global data
+    // Global data. Dedupe by id so a bad merge can never render duplicate-keyed
+    // rows or persist phantom funds (keeps the first occurrence of each id).
     savings: Array.isArray(finance.savings)
-      ? finance.savings.map(normalizeSavingsRow)
+      ? dedupeById(finance.savings.map(normalizeSavingsRow))
       : DEFAULT_SAVINGS_FUNDS,
     debts: Array.isArray(finance.debts) ? finance.debts.map(normalizeDebtRow) : [],
     sinkingFunds: Array.isArray(finance.sinkingFunds)

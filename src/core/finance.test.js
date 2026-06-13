@@ -3,6 +3,7 @@ import {
   CURRENT_SCHEMA,
   allocationSuggestion,
   ensureActiveMonth,
+  ensureStarterExpenses,
   financeTotals,
   forecastValues,
   getMonth,
@@ -158,6 +159,40 @@ describe("goal sequencing waterfall", () => {
     const house = plan.find((p) => p.name === "House down payment");
     expect(emergency.amount).toBe(200000); // filled to its gap first
     expect(house.amount).toBe(150000);     // remainder rolls down
+  });
+});
+
+describe("savings dedupe + explicit-zero preservation", () => {
+  it("normalizeFinance drops duplicate-id savings (keeps first)", () => {
+    const f = normalizeFinance({
+      savings: [
+        { id: "a", name: "Wedding", target: 6000000, monthly: 100000 },
+        { id: "a", name: "Fiancee support buffer", target: 1000000, monthly: 100000 },
+        { id: "b", name: "Travel", target: 600000, monthly: 50000 },
+      ],
+    });
+    const ids = f.savings.map((s) => s.id);
+    expect(ids.filter((x) => x === "a").length).toBe(1);
+    expect(f.savings.find((s) => s.id === "a").name).toBe("Wedding");
+  });
+
+  it("ensureStarterExpenses preserves an explicit monthly:0 on a default-named fund", () => {
+    const out = ensureStarterExpenses({
+      seededStarterExpenses: true,
+      seededCoreSavingsFunds: true,
+      savings: [{ id: "emergency-fund", name: "Emergency fund", target: 1500000, monthly: 0, saved: 0 }],
+    });
+    const em = out.savings.find((s) => s.id === "emergency-fund");
+    expect(em.monthly).toBe(0); // not reset to the default monthly
+  });
+
+  it("ensureStarterExpenses does not re-seed default funds once the flag is set", () => {
+    const out = ensureStarterExpenses({
+      seededStarterExpenses: true,
+      seededCoreSavingsFunds: true,
+      savings: [{ id: "x", name: "Apartment down payment", target: 13000000, monthly: 860000, saved: 0 }],
+    });
+    expect(out.savings.length).toBe(1);
   });
 });
 
