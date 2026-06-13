@@ -1034,7 +1034,7 @@ function SplitCoachCard({ income, totals, model, suggestion, applySuggestion, di
             <div className="split-ai-result why-order">
               {whyAt && <span className="ai-stamp">Why this order · {timeAgo(whyAt)}</span>}
               {whyText.split("\n").filter(Boolean).map((line, index) => (
-                <p key={index}>{line}</p>
+                <p key={index}>{line.replace(/^[-*•]\s*/, "")}</p>
               ))}
             </div>
           )}
@@ -1045,7 +1045,7 @@ function SplitCoachCard({ income, totals, model, suggestion, applySuggestion, di
                 {splitStale && <button className="ai-refresh" onClick={askAi}>refresh</button>}
               </span>
               {aiText.split("\n").filter(Boolean).map((line, index) => (
-                <p key={index}>{line}</p>
+                <p key={index}>{line.replace(/^[-*•]\s*/, "")}</p>
               ))}
             </div>
           )}
