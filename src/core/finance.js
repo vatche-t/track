@@ -770,3 +770,63 @@ export const allocationSuggestion = (income, savings = []) => {
     }] : []),
   ];
 };
+
+// Deterministic, AI-free plain-English summary of the recommended split.
+// Built only from the allocation amounts so the coach always explains itself,
+// even when the AI service is unavailable.
+export const splitSummarySentence = (suggestion = [], income = 0) => {
+  const amount = +income || 0;
+  if (amount <= 0) return "Log this month's income to see how to split it.";
+  const pct = (v) => Math.round(((+v || 0) / amount) * 100);
+  const card = suggestion.find((i) => i.kind === "reserve" && /spending/i.test(i.name));
+  const goals = suggestion.filter((i) => i.kind === "goal" && (+i.amount || 0) > 0);
+  const flex = suggestion.find((i) => i.kind === "reserve" && /skill|fun/i.test(i.name));
+  const unassigned = suggestion.find((i) => i.kind === "unassigned" && (+i.amount || 0) > 0);
+
+  const parts = [];
+  if (card) parts.push(`${pct(card.amount)}% protects your spending cap`);
+  if (goals[0]) parts.push(`${pct(goals[0].amount)}% builds your ${goals[0].name} (top priority goal)`);
+  if (flex && (+flex.amount || 0) > 0) parts.push(`${pct(flex.amount)}% is guilt-free fun`);
+
+  let sentence = (parts.join(", ") || "Set up a goal to put this income to work") + ".";
+  if (unassigned) {
+    sentence += ` ${Math.round(+unassigned.amount).toLocaleString()} AMD is unassigned — add or raise a goal target to give it a job.`;
+  } else {
+    sentence += " Nothing left unassigned.";
+  }
+  return sentence;
+};
+
+// Month-end spending projection from current pace. Pure so the Overview hero and
+// the Forecast card read one source of truth (no drift between them).
+export const forecastValues = ({ spentSoFar = 0, spendingCap = 0, dayOfMonth, daysInMonth } = {}) => {
+  const now = new Date();
+  const dim = daysInMonth || new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dom = dayOfMonth || now.getDate();
+  const daysRemaining = Math.max(1, dim - dom);
+  const dailyBurn = dom > 0 ? spentSoFar / dom : 0;
+  const projectedTotal = Math.round(dailyBurn * dim);
+  const safeToday = Math.max(0, Math.round((spendingCap - spentSoFar) / daysRemaining));
+  return {
+    daysInMonth: dim,
+    dayOfMonth: dom,
+    daysRemaining,
+    dailyBurn,
+    projectedTotal,
+    safeToday,
+    onTrack: projectedTotal <= spendingCap,
+  };
+};
+
+// Persisted AI text is stale when older than 24h or generated in a different month.
+export const isAiStale = (generatedAt, activeMonth) => {
+  if (!generatedAt) return true;
+  const t = new Date(generatedAt).getTime();
+  if (Number.isNaN(t)) return true;
+  if (Date.now() - t > 24 * 3600 * 1000) return true;
+  const genMonth = new Date(generatedAt).toISOString().slice(0, 7);
+  return Boolean(activeMonth) && genMonth !== activeMonth;
+};
+
+// Reimbursements can drive discretionary spend negative; never show negative Wants.
+export const wantsForDisplay = (discretionarySpent) => Math.max(0, +discretionarySpent || 0);

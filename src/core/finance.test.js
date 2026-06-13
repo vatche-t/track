@@ -4,9 +4,13 @@ import {
   allocationSuggestion,
   ensureActiveMonth,
   financeTotals,
+  forecastValues,
   getMonth,
+  isAiStale,
   normalizeFinance,
   spendNudge,
+  splitSummarySentence,
+  wantsForDisplay,
 } from "./finance.js";
 import { localDate, monthKey } from "./date.js";
 
@@ -154,5 +158,82 @@ describe("goal sequencing waterfall", () => {
     const house = plan.find((p) => p.name === "House down payment");
     expect(emergency.amount).toBe(200000); // filled to its gap first
     expect(house.amount).toBe(150000);     // remainder rolls down
+  });
+});
+
+describe("splitSummarySentence", () => {
+  const income = 523000;
+  const suggestion = [
+    { name: "Spending card", amount: 300000, kind: "reserve" },
+    { name: "Emergency fund", amount: 173000, kind: "goal", progress: 0 },
+    { name: "Skills / fun", amount: 50000, kind: "reserve" },
+  ];
+
+  it("describes proportions and the top goal, with nothing unassigned", () => {
+    const s = splitSummarySentence(suggestion, income);
+    expect(s).toContain("57%"); // 300000/523000
+    expect(s).toContain("Emergency fund");
+    expect(s).toMatch(/nothing (left )?unassigned/i);
+  });
+
+  it("calls out unassigned surplus when present", () => {
+    const withSurplus = [
+      { name: "Spending card", amount: 300000, kind: "reserve" },
+      { name: "Emergency fund", amount: 100000, kind: "goal", progress: 0 },
+      { name: "Unassigned surplus", amount: 123000, kind: "unassigned" },
+    ];
+    const s = splitSummarySentence(withSurplus, income);
+    expect(s).toMatch(/123,000 AMD .*unassigned|add .* goal/i);
+  });
+
+  it("prompts to log income when income is zero", () => {
+    expect(splitSummarySentence([], 0)).toMatch(/log .* income/i);
+  });
+});
+
+describe("forecastValues", () => {
+  it("projects month-end spend from daily burn and flags over-pace", () => {
+    const v = forecastValues({ spentSoFar: 223652, spendingCap: 300000, dayOfMonth: 13, daysInMonth: 30 });
+    expect(v.projectedTotal).toBe(Math.round((223652 / 13) * 30)); // 516120
+    expect(v.onTrack).toBe(false);
+    expect(v.daysRemaining).toBe(17);
+    expect(v.safeToday).toBe(Math.max(0, Math.round((300000 - 223652) / 17)));
+  });
+
+  it("is on track when projected stays under cap", () => {
+    const v = forecastValues({ spentSoFar: 50000, spendingCap: 300000, dayOfMonth: 10, daysInMonth: 30 });
+    expect(v.onTrack).toBe(true);
+  });
+});
+
+describe("isAiStale", () => {
+  const month = "2026-06";
+  it("fresh same-month recent timestamp is not stale", () => {
+    // Use a fixed mid-month date to avoid month-boundary flakiness.
+    const iso = "2026-06-13T10:00:00.000Z";
+    const realNow = Date.now;
+    Date.now = () => new Date("2026-06-13T11:00:00.000Z").getTime();
+    expect(isAiStale(iso, month)).toBe(false);
+    Date.now = realNow;
+  });
+  it("older than 24h is stale", () => {
+    const iso = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    expect(isAiStale(iso, new Date().toISOString().slice(0, 7))).toBe(true);
+  });
+  it("generated in a different month is stale", () => {
+    const iso = new Date().toISOString();
+    expect(isAiStale(iso, "2000-01")).toBe(true);
+  });
+  it("missing timestamp is stale", () => {
+    expect(isAiStale("", month)).toBe(true);
+  });
+});
+
+describe("wantsForDisplay", () => {
+  it("floors negative discretionary (refund-heavy) at 0", () => {
+    expect(wantsForDisplay(-11433)).toBe(0);
+  });
+  it("passes through positive", () => {
+    expect(wantsForDisplay(45017)).toBe(45017);
   });
 });
