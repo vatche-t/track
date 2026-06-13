@@ -22,6 +22,17 @@ STYLE:
 // don't break; the proxy reports a configuration error if the key is missing.
 export const hasGroqKey = () => true;
 
+// Shared spending-cap context so the AI never confuses the savings-transfer plan
+// with the actual monthly spending cap (the live bug where Kai called 1,050,000
+// "the cap"). Included verbatim in the finance Q&A and split-refine prompts.
+export function spendingContextBlock({ spendingCap = 0, projectedTotal = 0, onTrack = true } = {}) {
+  const pace = onTrack ? "on track" : "OVER PACE";
+  return `SPENDING CAP CONTEXT:
+- Monthly spending cap (life cap): ${Math.round(spendingCap).toLocaleString()} AMD. This is the ONLY spending limit.
+- Projected month-end spend at current pace: ${Math.round(projectedTotal).toLocaleString()} AMD (${pace}).
+- Savings/goal transfers are NOT a spending limit — never call the transfer total a "cap" or compare spending to it.`;
+}
+
 async function chat(messages, { maxTokens = 512, temperature = 0.3 } = {}) {
   const isReasoning = GROQ_MODEL.startsWith("openai/gpt-oss");
   // gpt-oss is a reasoning model: max_tokens covers reasoning + answer. With a
@@ -187,7 +198,7 @@ EXAMPLE (different data, match this shape):
   return chat([{ role: "user", content: prompt }], { maxTokens: 900, temperature: 0.15 });
 }
 
-export async function refineRecommendedSplit({ income, totals, savings, suggestion, exchange }) {
+export async function refineRecommendedSplit({ income, totals, savings, suggestion, exchange, spendingCap, projectedTotal, onTrack }) {
   const rate = Math.round(exchange?.rate || 390);
   const savingsLines = (savings || []).map((fund) => {
     const target = +fund.target || 0;
@@ -213,6 +224,8 @@ ${savingsLines}
 
 Current recommended split:
 ${suggestionLines}
+
+${spendingContextBlock({ spendingCap, projectedTotal, onTrack })}
 
 TASK:
 Propose a better monthly split only if the current one should change; otherwise confirm it and say why. Give an exact AMD amount per goal with a one-line reason.
@@ -268,7 +281,7 @@ Answer in 3 sentences max.`,
   }], { maxTokens: 250, temperature: 0.3 });
 }
 
-export async function askFinanceAnalyticsQuestion(question, { finance, totals, exchange, series }) {
+export async function askFinanceAnalyticsQuestion(question, { finance, totals, exchange, series, spendingCap, projectedTotal, onTrack }) {
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
   const rate = Math.round(exchange?.rate || 390);
@@ -320,6 +333,8 @@ Variable rows - ${variableLines}
 Savings funds - ${fundLines}
 Spend by category this month - ${categoryLines}
 Recent expenses - ${recentExpenses}${trendBlock(series)}
+
+${spendingContextBlock({ spendingCap, projectedTotal, onTrack })}
 
 QUESTION: ${question}
 
