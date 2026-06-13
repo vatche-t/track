@@ -10,6 +10,7 @@ import {
   Coins,
   CreditCard,
   Landmark,
+  Pencil,
   PiggyBank,
   Plus,
   ReceiptText,
@@ -882,20 +883,15 @@ export function FinanceTab({ finance, setFinance }) {
       )}
 
       {planMode === "goals" && (
-        <div className="finance-grid finance-goals-grid">
-          <MoneySection
-            title="Goal Funds"
-            section="savings"
-            rows={model.savings}
-            columns={["target", "targetDate", "saved", "monthly", "suggestedMonthly"]}
-            displayCurrency={displayCurrency}
-            exchange={exchange}
-            setItem={setItem}
-            setMoneyItem={setMoneyItem}
-            addItem={addItem}
-            delItem={delItem}
-          />
-        </div>
+        <GoalPlanBoard
+          rows={model.savings}
+          displayCurrency={displayCurrency}
+          exchange={exchange}
+          setItem={setItem}
+          setMoneyItem={setMoneyItem}
+          addItem={addItem}
+          delItem={delItem}
+        />
       )}
 
       {planMode === "wealth" && (
@@ -1590,6 +1586,129 @@ function FinanceAiPanel({ open, onClose, totals, model, setFinance, displayCurre
   );
 }
 
+
+// Which timeline phase a goal falls in, from its target date.
+const goalPhase = (months, hasDate) => {
+  if (!hasDate || months == null || !Number.isFinite(months)) return { key: "none", label: "No set date", dot: C.muted, order: 3 };
+  if (months <= 3) return { key: "soon", label: "Next 3 months", dot: C.amber, order: 0 };
+  if (months <= 12) return { key: "year", label: "This year", dot: C.green, order: 1 };
+  return { key: "long", label: "2+ years & later", dot: C.blue, order: 2 };
+};
+
+// A status chip + a plain-language line, both derived deterministically.
+const goalStatus = (row, fund) => {
+  const target = +row.target || 0;
+  const saved = +row.saved || 0;
+  const monthly = +row.monthly || 0;
+  if (target > 0 && saved >= target) return { cls: "ok", text: "funded" };
+  if (monthly <= 0) return { cls: "later", text: "no monthly yet" };
+  const payMonths = fund.remaining > 0 ? Math.ceil(fund.remaining / monthly) : 0;
+  const hasDate = Boolean(row.targetDate);
+  if (hasDate && payMonths > fund.months) return { cls: "soon", text: "behind pace" };
+  return { cls: "ok", text: "on track" };
+};
+
+const goalPlainLine = (row, fund, displayCurrency, exchange) => {
+  const target = +row.target || 0;
+  const saved = +row.saved || 0;
+  const monthly = +row.monthly || 0;
+  const M = (v) => displayMoney(v, displayCurrency, exchange);
+  if (target > 0 && saved >= target) return "Funded — goal reached. 🎉";
+  if (monthly > 0 && fund.remaining > 0) {
+    const payMonths = Math.ceil(fund.remaining / monthly);
+    return `${M(saved)} of ${M(target)} — at ${M(monthly)}/mo, about ${payMonths} month${payMonths === 1 ? "" : "s"} to go.`;
+  }
+  if (monthly <= 0 && fund.remaining > 0) {
+    return `${M(saved)} of ${M(target)} — no monthly set yet; fund it from a lump sum or add a monthly amount.`;
+  }
+  return `${M(saved)} of ${M(target)}.`;
+};
+
+// View-first "money plan": goals grouped into timeline phases with progress,
+// plain-language and status; the full editor opens behind the pencil per card.
+function GoalPlanBoard({ rows, displayCurrency, exchange, setItem, setMoneyItem, addItem, delItem }) {
+  const [editingId, setEditingId] = useState(null);
+  const committed = rows.reduce((sum, r) => sum + (+r.monthly || 0), 0);
+
+  const enriched = rows.map((row) => {
+    const fund = fundSuggestion(row);
+    return { row, fund, phase: goalPhase(fund.months, Boolean(row.targetDate)) };
+  });
+  const phaseOrder = ["soon", "year", "long", "none"];
+  const groups = phaseOrder
+    .map((key) => ({
+      meta: enriched.find((e) => e.phase.key === key)?.phase,
+      items: enriched.filter((e) => e.phase.key === key),
+    }))
+    .filter((g) => g.items.length);
+
+  return (
+    <Card className="goal-plan">
+      <div className="goal-plan-top">
+        <div>
+          <h3><Target size={18} /> Your money plan</h3>
+          <span>Goals in the order you'll reach them. Tap the pencil to edit.</span>
+        </div>
+        <div className="goal-plan-total">
+          <strong>{displayMoney(committed, displayCurrency, exchange)}</strong>
+          <span>committed / month</span>
+        </div>
+      </div>
+
+      {groups.map((group) => (
+        <div className="goal-phase" key={group.meta.key}>
+          <div className="goal-phase-head">
+            <span className="dot" style={{ background: group.meta.dot }} />
+            {group.meta.label}
+          </div>
+          {group.items.map(({ row, fund }) => {
+            if (editingId === row.id) {
+              return (
+                <div className="goal-edit-wrap" key={row.id}>
+                  <GoalFundRow
+                    row={row}
+                    fund={fund}
+                    displayCurrency={displayCurrency}
+                    exchange={exchange}
+                    setItem={setItem}
+                    setMoneyItem={setMoneyItem}
+                    delItem={(section, id) => { delItem(section, id); setEditingId(null); }}
+                  />
+                  <button className="goal-done-btn" onClick={() => setEditingId(null)}>Done</button>
+                </div>
+              );
+            }
+            const status = goalStatus(row, fund);
+            return (
+              <div className="goal-card" key={row.id}>
+                <button className="goal-pencil" title="Edit" onClick={() => setEditingId(row.id)}>
+                  <Pencil size={13} />
+                </button>
+                <div className="goal-card-top">
+                  <div className="goal-card-name">
+                    {row.name || "Untitled goal"}
+                    <span className={`goal-chip ${status.cls}`}>{status.text}</span>
+                  </div>
+                  <div className="goal-card-amt">
+                    <b>{displayMoney(row.saved || 0, displayCurrency, exchange)} / {displayMoney(row.target || 0, displayCurrency, exchange)}</b>
+                    <span>{(+row.monthly || 0) > 0 ? `${displayMoney(row.monthly, displayCurrency, exchange)}/mo` : "no monthly"}</span>
+                  </div>
+                </div>
+                <div className="goal-card-track"><i style={{ width: `${Math.max(1, fund.progress)}%` }} /></div>
+                <p className="goal-card-line">{goalPlainLine(row, fund, displayCurrency, exchange)}</p>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      {!rows.length && <div className="empty-inline">No goals yet — add your first below.</div>}
+      <button className="goal-add-btn" onClick={() => addItem("savings")}>
+        <Plus size={15} /> Add a goal
+      </button>
+    </Card>
+  );
+}
 
 function GoalFundRow({ row, fund, displayCurrency, exchange, setItem, setMoneyItem, delItem }) {
   return (
