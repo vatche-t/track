@@ -139,7 +139,10 @@ export default async function handler(req, res) {
       await tgSend(chatId, answer);
     }
   } catch (e) {
-    // Never 500 to Telegram (it would retry forever). Swallow + 200.
+    // Never 500 to Telegram (it would retry forever). Surface the error to the
+    // chat so config problems (e.g. wrong service key → RLS) are visible.
+    const cid = body?.message?.chat?.id || body?.callback_query?.message?.chat?.id;
+    if (cid) { try { await tgSend(cid, `⚠️ Bot error: ${(e && e.message) || e}`); } catch {} }
   }
   return res.status(200).end();
 }
