@@ -42,7 +42,7 @@ import {
   refineRecommendedSplit,
 } from "../core/groq";
 import { C } from "../core/constants";
-import { localDate, monthKey, submitOnEnter, sum, uid } from "../core/date";
+import { addDays, dayName, localDate, monthKey, parseDate, submitOnEnter, sum, uid } from "../core/date";
 import {
   AMD,
   MONEY_CURRENCIES,
@@ -383,15 +383,16 @@ export function FinanceTab({ finance, setFinance }) {
       ],
     };
     setFinance(nextFinance);
-    setDraft({
-      date: localDate(),
+    // Keep the date, currency, category and kind the user just used so logging
+    // several entries for the same day (or back-filling an older date) doesn't
+    // snap back to today every time. Only clear what's unique per entry.
+    setDraft((d) => ({
+      ...d,
       note: "",
       amount: "",
-      currency: draft.currency,
-      categoryName: "Other",
-      source: "Spending card",
-      kind: "expense",
-    });
+    }));
+    // Refocus the note field for rapid consecutive entry.
+    requestAnimationFrame(() => document.getElementById("expense-note")?.focus());
 
     // Proactive nudge: instant deterministic check, then enrich with one AI line.
     if (isExpense) {
@@ -678,6 +679,27 @@ export function FinanceTab({ finance, setFinance }) {
               <button className="nudge-dismiss" onClick={() => setNudge(null)} title="Dismiss">✕</button>
             </div>
           )}
+          <div className="date-chips" role="group" aria-label="Quick date">
+            {[
+              ["Today", localDate()],
+              ["Yesterday", localDate(addDays(new Date(), -1))],
+            ].map(([label, value]) => (
+              <button
+                key={label}
+                type="button"
+                className={draft.date === value ? "active" : ""}
+                onClick={() => setDraft((d) => ({ ...d, date: value }))}
+              >
+                {label}
+              </button>
+            ))}
+            {draft.date !== localDate() &&
+              draft.date !== localDate(addDays(new Date(), -1)) && (
+                <span className="date-chips-note">
+                  Logging {draft.date} — stays until you change it
+                </span>
+              )}
+          </div>
           <div className="expense-form" onKeyDown={submitOnEnter(addExpense)}>
             <Input
               value={draft.date}
@@ -685,6 +707,7 @@ export function FinanceTab({ finance, setFinance }) {
               type="date"
             />
             <Input
+              id="expense-note"
               value={draft.note}
               onChange={(note) =>
                 setDraft({
@@ -970,42 +993,136 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
   );
 }
 
+const PAGE = 25;
+
+const monthLabel = (m) =>
+  parseDate(`${m}-01`).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+
+const dayLabel = (iso) => {
+  if (iso === localDate()) return "Today";
+  if (iso === localDate(addDays(new Date(), -1))) return "Yesterday";
+  const d = parseDate(iso);
+  return `${dayName(d)}, ${d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+};
+
 function ExpenseList({ expenses, deleteExpense, displayCurrency, exchange }) {
-  const [limit, setLimit] = useState(10);
-  const visible = expenses.slice(0, limit);
+  const [limit, setLimit] = useState(PAGE);
+  const [month, setMonth] = useState("all");
+  const [query, setQuery] = useState("");
+
+  // Months present in the full history, newest first — drives the filter.
+  const months = useMemo(() => {
+    const set = new Set(
+      (expenses || []).map((e) => String(e.date || "").slice(0, 7)).filter(Boolean),
+    );
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [expenses]);
+
+  // Apply month + text filters across the FULL history, then sort newest-first.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (expenses || [])
+      .filter((e) => (month === "all" ? true : String(e.date || "").startsWith(month)))
+      .filter(
+        (e) =>
+          !q ||
+          String(e.note || "").toLowerCase().includes(q) ||
+          String(e.categoryName || "").toLowerCase().includes(q),
+      )
+      .slice()
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  }, [expenses, month, query]);
+
+  // Reset paging whenever the filter changes so you don't land mid-list.
+  useEffect(() => setLimit(PAGE), [month, query]);
+
+  const visible = filtered.slice(0, limit);
+
+  // Group the visible rows under date headers, preserving newest-first order.
+  const groups = useMemo(() => {
+    const map = new Map();
+    visible.forEach((e) => {
+      const key = e.date || "—";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(e);
+    });
+    return [...map.entries()];
+  }, [visible]);
+
   return (
     <div className="expense-list">
-      <div className="fin-header expense-header">
-        <span>Date</span>
-        <span>Expense</span>
-        <span>Category</span>
-        <span>Amount</span>
-        <span />
+      <div className="expense-toolbar">
+        <select
+          className="field"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          aria-label="Filter by month"
+        >
+          <option value="all">All months ({expenses.length})</option>
+          {months.map((m) => (
+            <option key={m} value={m}>
+              {monthLabel(m)}
+            </option>
+          ))}
+        </select>
+        <input
+          className="field"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search note or category…"
+          aria-label="Search expenses"
+        />
       </div>
-      {visible.map((expense) => (
-        <div className="expense-row" key={expense.id}>
-          <span>{expense.date}</span>
-          <strong>{expense.note}</strong>
-          <Pill>{expense.categoryName}</Pill>
-          <b>
-            {displayMoney(expense.amountAMD, displayCurrency, exchange)}
-            <small>
-              {expense.currency === USD
-                ? `${usd(expense.amount)} original`
-                : `${amd(expense.amountAMD)} base`}
-            </small>
-          </b>
-          <button className="icon-btn danger" onClick={() => deleteExpense(expense.id)}>
-            <Trash2 size={14} />
-          </button>
+
+      {groups.length === 0 ? (
+        <div className="empty-inline">
+          {expenses.length === 0
+            ? "No expenses logged yet — add your first above."
+            : "No expenses match this filter."}
         </div>
-      ))}
-      {!visible.length && (
-        <div className="empty-inline">No expenses logged this month yet.</div>
+      ) : (
+        groups.map(([date, rows]) => {
+          const subtotal = rows.reduce((t, e) => t + (e.amountAMD || 0), 0);
+          return (
+            <div className="expense-day" key={date}>
+              <div className="expense-day-head">
+                <span>{dayLabel(date)}</span>
+                <b className={subtotal < 0 ? "pos" : ""}>
+                  {displayMoney(subtotal, displayCurrency, exchange)}
+                </b>
+              </div>
+              {rows.map((expense) => (
+                <div className="expense-row" key={expense.id}>
+                  <strong>{expense.note}</strong>
+                  <Pill>{expense.categoryName}</Pill>
+                  <b className="expense-amt">
+                    {displayMoney(expense.amountAMD, displayCurrency, exchange)}
+                    <small>
+                      {expense.currency === USD
+                        ? `${usd(expense.amount)} original`
+                        : `${amd(expense.amountAMD)} base`}
+                    </small>
+                  </b>
+                  <button
+                    className="icon-btn danger"
+                    onClick={() => deleteExpense(expense.id)}
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          );
+        })
       )}
-      {expenses.length > limit && (
-        <button className="show-more" onClick={() => setLimit((l) => l + 20)}>
-          Show more ({expenses.length - limit} hidden)
+
+      {filtered.length > limit && (
+        <button className="show-more" onClick={() => setLimit((l) => l + PAGE)}>
+          Load more ({filtered.length - limit} older)
         </button>
       )}
     </div>
