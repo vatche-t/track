@@ -186,6 +186,12 @@ describe("savings dedupe + explicit-zero preservation", () => {
     expect(em.monthly).toBe(0); // not reset to the default monthly
   });
 
+  it("normalizeFinance preserves the seed flags (so re-seed never re-fires)", () => {
+    const f = normalizeFinance({ seededStarterExpenses: true, seededCoreSavingsFunds: true, savings: [] });
+    expect(f.seededStarterExpenses).toBe(true);
+    expect(f.seededCoreSavingsFunds).toBe(true);
+  });
+
   it("ensureStarterExpenses does not re-seed default funds once the flag is set", () => {
     const out = ensureStarterExpenses({
       seededStarterExpenses: true,

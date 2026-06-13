@@ -421,6 +421,11 @@ export const normalizeFinance = (finance = {}) => {
 
   return {
     schemaVersion: CURRENT_SCHEMA,
+    // Preserve the one-time seed flags — normalize previously dropped them, which
+    // let ensureStarterExpenses re-seed default funds on every reload (resurrecting
+    // renamed/removed funds like "House down payment").
+    seededStarterExpenses: finance.seededStarterExpenses,
+    seededCoreSavingsFunds: finance.seededCoreSavingsFunds,
     activeMonth,
     months,
     // Active-month setup mirrored to top level so existing read sites keep working.
