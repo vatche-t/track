@@ -11,17 +11,25 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.APP_URL || "https://track.vatche.me";
 const TG = `https://api.telegram.org/bot${TOKEN}`;
 
-export const supa = createClient(SUPA_URL, process.env.SUPABASE_SERVICE_KEY || "", {
-  auth: { persistSession: false },
-});
+// Lazily create the client so a missing/late env var can't crash the function at
+// import time (which would 500 every request, even the auth check).
+let _supa = null;
+function db() {
+  if (!_supa) {
+    const key = process.env.SUPABASE_SERVICE_KEY;
+    if (!key) throw new Error("SUPABASE_SERVICE_KEY is not set");
+    _supa = createClient(SUPA_URL, key, { auth: { persistSession: false } });
+  }
+  return _supa;
+}
 
 // ── kv_store access (per-user JSON blobs, same keys the app uses) ──────────
 export async function kvGet(key, fallback = null) {
-  const { data } = await supa.from("kv_store").select("value").eq("user_id", UID).eq("key", key).maybeSingle();
+  const { data } = await db().from("kv_store").select("value").eq("user_id", UID).eq("key", key).maybeSingle();
   return data?.value ?? fallback;
 }
 export async function kvSet(key, value) {
-  await supa.from("kv_store").upsert(
+  await db().from("kv_store").upsert(
     { user_id: UID, key, value, updated_at: new Date().toISOString() },
     { onConflict: "user_id,key" },
   );
