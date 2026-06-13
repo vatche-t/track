@@ -137,17 +137,24 @@ const rateAge = (fetchedAt) => {
   return `${Math.round(minutes / 60)}h old`;
 };
 
-// Persist an AI result + timestamp into finance.ai so it survives reloads.
+// Persist an AI result + timestamp into the ACTIVE MONTH's ai so it survives
+// reloads. The finance model is month-keyed and normalizeFinance sources the
+// top-level `ai` from months[activeMonth].ai — so we must write the month, not
+// just the mirrored top level, or the value is wiped on the next normalize.
 const persistAi = (setFinance, field, text) =>
   setFinance((previous) => {
     const normalized = normalizeFinance(previous);
+    const month = normalized.activeMonth;
+    const monthAi = normalized.months[month]?.ai || {};
+    const nextAi = {
+      ...monthAi,
+      [field]: text,
+      generatedAt: { ...(monthAi.generatedAt || {}), [field]: new Date().toISOString() },
+    };
     return {
       ...normalized,
-      ai: {
-        ...normalized.ai,
-        [field]: text,
-        generatedAt: { ...normalized.ai.generatedAt, [field]: new Date().toISOString() },
-      },
+      months: { ...normalized.months, [month]: { ...normalized.months[month], ai: nextAi } },
+      ai: nextAi, // keep the mirror in sync for the current render
     };
   });
 
