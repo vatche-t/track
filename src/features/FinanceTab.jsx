@@ -27,7 +27,9 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
+  Label,
   Line,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -45,6 +47,7 @@ import {
   refineRecommendedSplit,
 } from "../core/groq";
 import { C } from "../core/constants";
+import { buildInsights, chartTakeaway } from "../core/coach";
 import { addDays, dayName, localDate, monthKey, parseDate, submitOnEnter, sum, uid } from "../core/date";
 import {
   AMD,
@@ -203,6 +206,20 @@ export function FinanceTab({ finance, setFinance }) {
     () => forecastValues({ spentSoFar: totals.spent, spendingCap }),
     [totals.spent, spendingCap],
   );
+  const [dismissed, setDismissed] = useState({});
+  const insights = useMemo(() => {
+    const map = {};
+    currentMonthExpenses(model).forEach((e) => {
+      const amt = expenseAmountAMD(e, exchange);
+      if (amt <= 0) return; // skip reimbursements
+      map[e.categoryName || "Other"] = (map[e.categoryName || "Other"] || 0) + amt;
+    });
+    const categories = Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    return buildInsights({ totals, fc, spendingCap, categories, dayOfMonth: fc.dayOfMonth });
+  }, [model, totals, fc, spendingCap, exchange]);
+  const topInsight = insights.find((i) => !dismissed[i.id]);
   const activeMonth = model.activeMonth;
   const PER_MONTH = new Set(["income", "fixed", "variable"]);
   const overcommit = totals.monthlyGoal + spendingCap - totals.incomePlan;
@@ -654,6 +671,21 @@ export function FinanceTab({ finance, setFinance }) {
 
       {planMode === "overview" && (
         <>
+          {topInsight && (
+            <div className={`insight-card sev-${topInsight.severity}`} role="status">
+              <div className="insight-body">
+                <strong>{topInsight.title}</strong>
+                <p>{topInsight.body}</p>
+              </div>
+              <button
+                className="insight-dismiss"
+                onClick={() => setDismissed((d) => ({ ...d, [topInsight.id]: true }))}
+                title="Dismiss"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
           <SplitCoachCard
             income={salary}
             totals={totals}
@@ -1248,6 +1280,8 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
         </div>
       </div>
 
+      <p className="chart-takeaway">{chartTakeaway("forecast", { projectedTotal, spendingCap, onTrack })}</p>
+
       <div className="forecast-grid">
         <div className="forecast-stat">
           <span>Spent so far</span>
@@ -1320,6 +1354,14 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
                   );
                 }}
               />
+              {/* Shade the over-cap zone red so "overspending" reads without doing math. */}
+              {yMax > spendingCap && (
+                <ReferenceArea y1={spendingCap} y2={yMax} fill={C.red} fillOpacity={0.07} />
+              )}
+              {/* Labeled spending cap line. */}
+              <ReferenceLine y={spendingCap} stroke={C.amber} strokeDasharray="4 4" strokeOpacity={0.7}>
+                <Label value="cap" position="insideTopRight" fill={C.amber} fontSize={10} fontWeight={700} />
+              </ReferenceLine>
               <ReferenceLine x={dayOfMonth} stroke={C.textDim} strokeDasharray="2 3" />
               <Line
                 name="Ideal pace"

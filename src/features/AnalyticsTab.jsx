@@ -40,6 +40,7 @@ import {
   savingsPlan,
 } from "../core/finance";
 import { askDataQuestion, askFinanceAnalyticsQuestion } from "../core/groq";
+import { chartTakeaway } from "../core/coach";
 
 export function AnalyticsTab({ tasks, habits, goals, finance }) {
   const financeModel = useMemo(() => normalizeFinance(finance), [finance]);
@@ -247,6 +248,13 @@ function MonthlyTrendPanel({ finance }) {
         </div>
         <Pill color={C.blue}>{data.length} mo</Pill>
       </div>
+      <p className="chart-takeaway">
+        {chartTakeaway("trend", {
+          thisMonth: data[data.length - 1]?.spent || 0,
+          lastMonth: data[data.length - 2]?.spent || 0,
+          hasHistory,
+        })}
+      </p>
       {hasHistory ? (
         <ResponsiveContainer width="100%" height={210}>
           <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -380,6 +388,9 @@ function SpendCategoryBoard({ categories, exchange }) {
         </div>
         <strong>{displayMoney(total, AMD, exchange)}</strong>
       </div>
+      <p className="chart-takeaway">
+        {chartTakeaway("category", { topName: top[0]?.name, topValue: top[0]?.value || 0, total })}
+      </p>
       <div className="category-bars">
         {top.length ? top.map((row, index) => {
           const pct = total > 0 ? Math.round((row.value / total) * 100) : 0;
@@ -402,6 +413,11 @@ function SpendCategoryBoard({ categories, exchange }) {
 }
 
 function BudgetVarianceBoard({ rows, exchange }) {
+  const overCount = rows.filter((row) => {
+    const variance = row.actual - row.budget;
+    const favorable = row.direction === "higher" ? variance >= 0 : variance <= 0;
+    return !favorable;
+  }).length;
   return (
     <Card className="finance-panel">
       <div className="finance-panel-head">
@@ -410,6 +426,7 @@ function BudgetVarianceBoard({ rows, exchange }) {
           <h3>Budget variance</h3>
         </div>
       </div>
+      <p className="chart-takeaway">{chartTakeaway("variance", { overCount, total: rows.length })}</p>
       <div className="variance-list">
         {rows.map((row) => {
           const variance = row.actual - row.budget;
