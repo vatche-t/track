@@ -98,6 +98,14 @@ export default async function handler(req, res) {
       await tgSend(chatId, `Linked ✅ You'll get your alerts and check-ins here.\n\n${HELP}`);
     } else if (lc === "/help") {
       await tgSend(chatId, HELP);
+    } else if (lc === "/diag") {
+      const k = process.env.SUPABASE_SERVICE_KEY || "";
+      let role = "MISSING";
+      try { role = JSON.parse(Buffer.from(k.split(".")[1] || "", "base64").toString()).role; } catch { role = k ? "unparseable" : "MISSING"; }
+      let write = "OK ✅";
+      try { await kvSet("pt_diagtest", { t: Date.now() }); } catch (e) { write = `FAILED ❌ ${(e && e.message) || e}`; }
+      await tgSend(chatId,
+        `<b>Diagnostics</b>\nKey role: <b>${role}</b> (needs <b>service_role</b>)\nUser id env: ${process.env.TRACKER_USER_ID ? "set" : "using fallback"}\nWrite test: ${write}`);
     } else if (lc === "/report") {
       await tgSend(chatId, await buildReport());
     } else if (lc === "/checkin") {
