@@ -6,7 +6,8 @@
 import { createClient } from "@supabase/supabase-js";
 
 const SUPA_URL = process.env.SUPABASE_URL || "https://iuuvgmdvdohlurqhnxui.supabase.co";
-const UID = process.env.TRACKER_USER_ID;
+// Single-user app: fall back to the known user id so a missing env var can't break it.
+const UID = process.env.TRACKER_USER_ID || "d5538d66-df67-412c-80d8-bbe0475b76d6";
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const APP_URL = process.env.APP_URL || "https://track.vatche.me";
 const TG = `https://api.telegram.org/bot${TOKEN}`;
@@ -29,10 +30,11 @@ export async function kvGet(key, fallback = null) {
   return data?.value ?? fallback;
 }
 export async function kvSet(key, value) {
-  await db().from("kv_store").upsert(
+  const { error } = await db().from("kv_store").upsert(
     { user_id: UID, key, value, updated_at: new Date().toISOString() },
     { onConflict: "user_id,key" },
   );
+  if (error) throw new Error(`kvSet ${key}: ${error.message}`);
 }
 
 // Bot config/state lives in its own kv key.
