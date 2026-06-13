@@ -29,10 +29,12 @@ import {
 } from "../core/date";
 import {
   AMD,
+  allocationSuggestion,
   amd,
   displayMoney,
   expenseAmountAMD,
   financeTotals,
+  forecastValues,
   monthlySeries,
   normalizeFinance,
   savingsPlan,
@@ -513,7 +515,12 @@ function FinanceAiAnalyst({ finance, totals, exchange }) {
     setErr("");
     setQuestion("");
     try {
-      const text = await askFinanceAnalyticsQuestion(q, { finance, totals, exchange, series: monthlySeries(finance, 6) });
+      const spendingCap = allocationSuggestion(totals.income, finance.savings)[0]?.amount || 300000;
+      const fc = forecastValues({ spentSoFar: totals.spent, spendingCap });
+      const text = await askFinanceAnalyticsQuestion(q, {
+        finance, totals, exchange, series: monthlySeries(finance, 6),
+        spendingCap, projectedTotal: fc.projectedTotal, onTrack: fc.onTrack,
+      });
       setHistory((items) => [...items, { q, a: text }]);
     } catch (e) {
       setErr(e.message);

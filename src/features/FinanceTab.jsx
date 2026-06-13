@@ -60,16 +60,20 @@ import {
   expenseAmountAMD,
   fetchUsdAmdRate,
   financeTotals,
+  forecastValues,
   getMonth,
+  isAiStale,
   monthlySeries,
   netWorthSummary,
   spendNudge,
+  splitSummarySentence,
   formatMoney,
   fromAMD,
   fundSuggestion,
   normalizeFinance,
   toAMD,
   usd,
+  wantsForDisplay,
 } from "../core/finance";
 
 const COL_LABEL = {
@@ -186,6 +190,12 @@ export function FinanceTab({ finance, setFinance }) {
   const spendingCap = suggestion[0]?.amount || 300000;
   const loggedThisMonth = totals.spent;
   const capPct = Math.min(100, Math.round((loggedThisMonth / spendingCap) * 100));
+  // One source of truth for the month-end projection, shared by the split-coach
+  // hero, the forecast card, and the AI prompts so they never disagree.
+  const fc = useMemo(
+    () => forecastValues({ spentSoFar: totals.spent, spendingCap }),
+    [totals.spent, spendingCap],
+  );
   const activeMonth = model.activeMonth;
   const PER_MONTH = new Set(["income", "fixed", "variable"]);
   const overcommit = totals.monthlyGoal + spendingCap - totals.incomePlan;
@@ -538,6 +548,8 @@ export function FinanceTab({ finance, setFinance }) {
         setFinance={setFinance}
         displayCurrency={displayCurrency}
         exchange={exchange}
+        spendingCap={spendingCap}
+        fc={fc}
       />
 
       {financeView === "analytics" ? (
@@ -577,15 +589,31 @@ export function FinanceTab({ finance, setFinance }) {
         </div>
       </Card>
 
-      <div className="stats-grid" style={{ marginBottom: 20 }}>
-        <Stat label="Income (this month)" value={displayMoney(totals.income, displayCurrency, exchange)} color={C.green} />
-        <Stat label="Spent" value={displayMoney(totals.spent, displayCurrency, exchange)} color={C.red} />
+      <div className="stats-grid" style={{ marginBottom: 16 }}>
+        <Stat
+          label="Income received"
+          value={displayMoney(totals.income, displayCurrency, exchange)}
+          color={C.green}
+          sub={`of ${displayMoney(totals.incomePlan, displayCurrency, exchange)} planned`}
+        />
+        <Stat
+          label="Spent"
+          value={displayMoney(totals.spent, displayCurrency, exchange)}
+          color={fc.onTrack ? C.text : C.red}
+          sub={`${capPct}% of ${displayMoney(spendingCap, displayCurrency, exchange)} cap`}
+        />
         <Stat
           label="Net this month"
           value={displayMoney(totals.net, displayCurrency, exchange)}
           color={totals.net >= 0 ? C.green : C.red}
+          sub="free to assign"
         />
-        <Stat label="Savings plan / mo" value={displayMoney(totals.monthlyGoal, displayCurrency, exchange)} color={C.blue} />
+        <Stat
+          label="Saved so far"
+          value={displayMoney(totals.saved, displayCurrency, exchange)}
+          color={C.blue}
+          sub={`across ${model.savings.length} goals`}
+        />
       </div>
 
       {overcommit > 0 && (
@@ -619,7 +647,18 @@ export function FinanceTab({ finance, setFinance }) {
 
       {planMode === "overview" && (
         <>
-          <div className="finance-overview-grid">
+          <SplitCoachCard
+            income={salary}
+            totals={totals}
+            model={model}
+            suggestion={suggestion}
+            applySuggestion={applySuggestion}
+            displayCurrency={displayCurrency}
+            exchange={exchange}
+            setFinance={setFinance}
+            fc={fc}
+          />
+          <div className="finance-lower-grid">
             <SpendingForecastCard
               spentSoFar={totals.spent}
               spendingCap={spendingCap}
@@ -627,19 +666,10 @@ export function FinanceTab({ finance, setFinance }) {
               displayCurrency={displayCurrency}
               model={model}
               setFinance={setFinance}
+              fc={fc}
             />
-            <RecommendedSplitCard
-              income={salary}
-              totals={totals}
-              model={model}
-              suggestion={suggestion}
-              applySuggestion={applySuggestion}
-              displayCurrency={displayCurrency}
-              exchange={exchange}
-              setFinance={setFinance}
-            />
+            <NeedsWantsCard totals={totals} model={model} displayCurrency={displayCurrency} exchange={exchange} />
           </div>
-          <NeedsWantsCard totals={totals} model={model} displayCurrency={displayCurrency} exchange={exchange} />
         </>
       )}
 
@@ -843,21 +873,31 @@ export function FinanceTab({ finance, setFinance }) {
   );
 }
 
-function RecommendedSplitCard({ income, totals, model, suggestion, applySuggestion, displayCurrency, exchange, setFinance }) {
+// The Overview hero: "Hey Vatche, you received X — here's how to split it."
+// Always shows a deterministic plain-English summary + proportion bar; AI is an
+// optional refinement layered below, never the only content.
+function SplitCoachCard({ income, totals, model, suggestion, applySuggestion, displayCurrency, exchange, setFinance, fc }) {
   const aiText = model.ai?.split || "";
   const aiAt = model.ai?.generatedAt?.split || "";
   const whyText = model.ai?.waterfall || "";
   const whyAt = model.ai?.generatedAt?.waterfall || "";
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiError, setAiError] = useState("");
   const [whyBusy, setWhyBusy] = useState(false);
-  const goalRows = suggestion.filter((item) => item.kind === "goal");
-  const reserveRows = suggestion.filter((item) => item.kind === "reserve");
-  const unassignedRows = suggestion.filter((item) => item.kind === "unassigned");
-  const goalTotal = goalRows.reduce((total, item) => total + (+item.amount || 0), 0);
-  const reserveTotal = reserveRows.reduce((total, item) => total + (+item.amount || 0), 0);
-  const unassignedTotal = unassignedRows.reduce((total, item) => total + (+item.amount || 0), 0);
-  const incomePct = income > 0 ? Math.round((goalTotal / income) * 100) : 0;
+  const [aiError, setAiError] = useState("");
+
+  const summary = splitSummarySentence(suggestion, income);
+  const segs = suggestion
+    .filter((item) => (+item.amount || 0) > 0)
+    .map((item) => ({
+      ...item,
+      pct: income > 0 ? Math.round((item.amount / income) * 100) : 0,
+      color:
+        item.kind === "unassigned" ? C.amber
+          : /spending/i.test(item.name) ? C.amber
+          : /skill|fun/i.test(item.name) ? C.blue
+          : C.green,
+    }));
+  const splitStale = isAiStale(aiAt, model.activeMonth);
 
   const askAi = async () => {
     setAiBusy(true);
@@ -869,10 +909,13 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
         savings: model.savings,
         suggestion,
         exchange,
+        spendingCap: suggestion[0]?.amount || 300000,
+        projectedTotal: fc?.projectedTotal,
+        onTrack: fc?.onTrack,
       });
       persistAi(setFinance, "split", text);
     } catch (error) {
-      setAiError(error.message);
+      setAiError(error.message || "AI unavailable — showing the calculated split.");
     } finally {
       setAiBusy(false);
     }
@@ -885,114 +928,93 @@ function RecommendedSplitCard({ income, totals, model, suggestion, applySuggesti
       const text = await explainWaterfall({ suggestion, savings: model.savings, exchange });
       persistAi(setFinance, "waterfall", text);
     } catch (error) {
-      setAiError(error.message);
+      setAiError(error.message || "AI unavailable.");
     } finally {
       setWhyBusy(false);
     }
   };
 
   return (
-    <Card className="allocation-card recommended-split-card">
-      <div className="card-head split-card-head">
+    <Card className="split-coach">
+      <div className="split-coach-top">
         <div>
+          <span className="greet">✦ Hey Vatche</span>
           <h3>
-            <Target size={18} /> Recommended split
+            {income > 0
+              ? `You received ${displayMoney(income, displayCurrency, exchange)} — here's how to split it`
+              : "Log this month's income to see your split"}
           </h3>
-          <span>Auto-calculated from income, goal gaps, and the 300,000 AMD life cap.</span>
         </div>
-        <div className="split-actions">
-          <Button onClick={askAi} disabled={aiBusy}>
-            {aiBusy ? "Thinking..." : <><BrainCircuit size={14} /> {aiText ? "Refresh" : "Ask AI"}</>}
-          </Button>
-          <Button onClick={askWhy} disabled={whyBusy} title="Why this funding order?">
-            {whyBusy ? "..." : "Why this order?"}
-          </Button>
-          <Button variant="primary" onClick={applySuggestion}>
-            <ArrowRight size={15} /> Apply
-          </Button>
-        </div>
+        {income > 0 && (
+          <Pill color={fc?.onTrack ? C.green : C.red}>
+            {fc?.onTrack
+              ? "On track"
+              : `Over pace — projected ${displayMoney(fc?.projectedTotal || 0, displayCurrency, exchange)}`}
+          </Pill>
+        )}
       </div>
 
-      <div className="split-summary">
-        <div>
-          <span>Income</span>
-          <b>{displayMoney(income, displayCurrency, exchange)}</b>
-          <small>Your monthly actual income.</small>
-        </div>
-        <div>
-          <span>Reserved</span>
-          <b>{displayMoney(reserveTotal, displayCurrency, exchange)}</b>
-          <small>Spending card plus skills/fun.</small>
-        </div>
-        <div>
-          <span>To goals</span>
-          <b>{displayMoney(goalTotal, displayCurrency, exchange)}</b>
-          <small>Amount Apply will write to goals.</small>
-        </div>
-        <div>
-          <span>Unassigned</span>
-          <b style={{ color: unassignedTotal > 0 ? C.amber : C.green }}>
-            {displayMoney(unassignedTotal, displayCurrency, exchange)}
-          </b>
-          <small>Money still without a job.</small>
-        </div>
-      </div>
-      <div className="split-rate-line">
-        <span>Goal rate after reserves</span>
-        <b>{incomePct}% of income</b>
-      </div>
-
-      <div className="recommended-goals">
-        {goalRows.map((item) => {
-          const pct = income > 0 ? Math.min(100, Math.round((item.amount / income) * 100)) : 0;
-          return (
-            <div className="recommended-goal" key={item.id || item.name}>
-              <div className="recommended-goal-top">
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>{item.reason}</span>
-                </div>
-                <b>{displayMoney(item.amount, displayCurrency, exchange)}</b>
-              </div>
-              <div className="recommended-progress">
-                <i style={{ width: `${pct}%` }} />
-              </div>
-              <div className="recommended-meta">
-                <span>{pct}% of income</span>
-                <span>{item.progress}% funded</span>
-                <span>Gap {displayMoney(item.remaining, displayCurrency, exchange)}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="reserve-strip">
-        {[...reserveRows, ...unassignedRows].map((item) => (
-          <div key={item.name}>
-            <span>{item.name}</span>
-            <b>{displayMoney(item.amount, displayCurrency, exchange)}</b>
-            <small>{item.reason}</small>
+      {income > 0 && (
+        <>
+          <div className="split-bar">
+            {segs.map((seg) => (
+              <span
+                key={seg.id || seg.name}
+                style={{ width: `${seg.pct}%`, background: seg.color }}
+                title={`${seg.name} ${seg.pct}%`}
+              />
+            ))}
           </div>
-        ))}
-      </div>
+          <div className="split-coach-body">
+            <div className="split-legend">
+              {segs.map((seg) => (
+                <div className="li" key={seg.id || seg.name}>
+                  <span className="dot" style={{ background: seg.color }} />
+                  <span className="nm">
+                    {seg.name}
+                    <small>{seg.reason || seg.note || ""}</small>
+                  </span>
+                  <b style={{ color: seg.color }}>{displayMoney(seg.amount, displayCurrency, exchange)}</b>
+                </div>
+              ))}
+            </div>
+            <div className="split-coach-side">
+              <p className="split-plain">{summary}</p>
+              <div className="split-actions">
+                <Button variant="primary" onClick={applySuggestion}>
+                  <ArrowRight size={15} /> Apply this split
+                </Button>
+                <Button onClick={askWhy} disabled={whyBusy}>
+                  {whyBusy ? "..." : "Why this order?"}
+                </Button>
+                <Button onClick={askAi} disabled={aiBusy}>
+                  {aiBusy ? "Thinking..." : <><BrainCircuit size={14} /> {aiText ? "Refresh AI" : "Refine with AI"}</>}
+                </Button>
+              </div>
+              {aiError && <div className="rate-error">{aiError}</div>}
+            </div>
+          </div>
 
-      {aiError && <div className="rate-error">{aiError}</div>}
-      {whyText && (
-        <div className="split-ai-result why-order">
-          {whyAt && <span className="ai-stamp">Why this order - {timeAgo(whyAt)}</span>}
-          {whyText.split("\n").filter(Boolean).map((line, index) => (
-            <p key={index}>{line}</p>
-          ))}
-        </div>
-      )}
-      {aiText && (
-        <div className="split-ai-result">
-          {aiAt && <span className="ai-stamp">Generated {timeAgo(aiAt)}</span>}
-          {aiText.split("\n").filter(Boolean).map((line, index) => (
-            <p key={index}>{line}</p>
-          ))}
-        </div>
+          {whyText && (
+            <div className="split-ai-result why-order">
+              {whyAt && <span className="ai-stamp">Why this order · {timeAgo(whyAt)}</span>}
+              {whyText.split("\n").filter(Boolean).map((line, index) => (
+                <p key={index}>{line}</p>
+              ))}
+            </div>
+          )}
+          {aiText && (
+            <div className={`split-ai-result${splitStale ? " stale" : ""}`}>
+              <span className="ai-stamp">
+                {splitStale ? "May be outdated · " : "Refined · "}{timeAgo(aiAt)}
+                {splitStale && <button className="ai-refresh" onClick={askAi}>refresh</button>}
+              </span>
+              {aiText.split("\n").filter(Boolean).map((line, index) => (
+                <p key={index}>{line}</p>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </Card>
   );
@@ -1134,18 +1156,20 @@ function ExpenseList({ expenses, deleteExpense, displayCurrency, exchange }) {
   );
 }
 
-function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurrency, model, setFinance }) {
-  const today = new Date();
-  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  const dayOfMonth = today.getDate();
-  const daysRemaining = Math.max(1, daysInMonth - dayOfMonth);
-  const dailyBurn = dayOfMonth > 0 ? spentSoFar / dayOfMonth : 0;
+function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurrency, model, setFinance, fc }) {
+  // Prefer the shared forecast values so this card and the split-coach hero never
+  // disagree; fall back to a local compute if not provided.
+  const v = fc || forecastValues({ spentSoFar, spendingCap });
+  const daysInMonth = v.daysInMonth;
+  const dayOfMonth = v.dayOfMonth;
+  const daysRemaining = v.daysRemaining;
+  const dailyBurn = v.dailyBurn;
   const targetDailyBurn = spendingCap > 0 ? spendingCap / daysInMonth : 0;
-  const projectedTotal = Math.round(dailyBurn * daysInMonth);
+  const projectedTotal = v.projectedTotal;
   const remainingBudget = Math.max(0, spendingCap - spentSoFar);
   const paceDelta = Math.round(dailyBurn - targetDailyBurn);
-  const safeToday = Math.max(0, Math.round((spendingCap - spentSoFar) / daysRemaining));
-  const onTrack = projectedTotal <= spendingCap;
+  const safeToday = v.safeToday;
+  const onTrack = v.onTrack;
   const pct = spendingCap > 0 ? Math.min(100, Math.round((spentSoFar / spendingCap) * 100)) : 0;
   const projPct = spendingCap > 0 ? Math.min(100, Math.round((projectedTotal / spendingCap) * 100)) : 0;
 
@@ -1345,8 +1369,14 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
       </div>
 
       {forecast && (
-        <div className="forecast-ai">
-          {forecastAt && <span className="ai-stamp">Generated {timeAgo(forecastAt)}</span>}
+        <div className={`forecast-ai${isAiStale(forecastAt, model.activeMonth) ? " stale" : ""}`}>
+          <span className="ai-stamp">
+            {isAiStale(forecastAt, model.activeMonth) ? "May be outdated · " : "Generated · "}
+            {timeAgo(forecastAt)}
+            {isAiStale(forecastAt, model.activeMonth) && (
+              <button className="ai-refresh" onClick={ask}>refresh</button>
+            )}
+          </span>
           <p>{forecast}</p>
         </div>
       )}
@@ -1357,7 +1387,7 @@ function SpendingForecastCard({ spentSoFar, spendingCap, exchange, displayCurren
 // Docked right-side finance assistant. Free-form questions are answered from the
 // live finance snapshot via askFinanceAnalyticsQuestion; "Full review" runs the
 // heavier getFinancialAdvice pass and persists it so it survives reloads.
-function FinanceAiPanel({ open, onClose, totals, model, setFinance, displayCurrency, exchange }) {
+function FinanceAiPanel({ open, onClose, totals, model, setFinance, displayCurrency, exchange, spendingCap, fc }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1392,7 +1422,10 @@ function FinanceAiPanel({ open, onClose, totals, model, setFinance, displayCurre
     setMessages((m) => [...m, { role: "user", text: q }]);
     setBusy(true);
     try {
-      const answer = await askFinanceAnalyticsQuestion(q, { finance: model, totals, exchange, series });
+      const answer = await askFinanceAnalyticsQuestion(q, {
+        finance: model, totals, exchange, series,
+        spendingCap, projectedTotal: fc?.projectedTotal, onTrack: fc?.onTrack,
+      });
       setMessages((m) => [...m, { role: "ai", text: answer }]);
     } catch (e) {
       setMessages((m) => [...m, { role: "ai", text: `Couldn't answer that right now (${e.message}).`, error: true }]);
@@ -1730,7 +1763,8 @@ function MoneySection({
 // Overview: needs vs wants split, savings rate, and emergency-fund runway.
 function NeedsWantsCard({ totals, model, displayCurrency, exchange }) {
   const essential = totals.essentialSpent;
-  const discretionary = totals.discretionarySpent;
+  const discretionary = wantsForDisplay(totals.discretionarySpent);
+  const refundNote = totals.discretionarySpent < 0;
   const total = essential + discretionary;
   const essentialPct = total > 0 ? Math.round((essential / total) * 100) : 0;
   const emergency =
@@ -1752,7 +1786,7 @@ function NeedsWantsCard({ totals, model, displayCurrency, exchange }) {
       </div>
       <div className="needs-wants-legend">
         <div><i className="needs" /> Needs <b>{displayMoney(essential, displayCurrency, exchange)}</b></div>
-        <div><i className="wants" /> Wants <b>{displayMoney(discretionary, displayCurrency, exchange)}</b></div>
+        <div><i className="wants" /> Wants <b>{displayMoney(discretionary, displayCurrency, exchange)}</b>{refundNote && <small className="muted-note"> (net of refunds)</small>}</div>
       </div>
       <div className="needs-wants-foot">
         <div>

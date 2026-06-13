@@ -141,6 +141,7 @@ export function Stat({
   color = C.text,
   moneyValue,
   suffix = "",
+  sub = "",
 }) {
   const displayValue = typeof value === "string" ? value : fmt(value) + suffix;
   return (
@@ -149,6 +150,7 @@ export function Stat({
       <strong style={{ color }}>
         {moneyValue ? money(value) : displayValue}
       </strong>
+      {sub ? <small className="stat-sub">{sub}</small> : null}
     </Card>
   );
 }
