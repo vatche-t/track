@@ -2006,6 +2006,17 @@ function WealthPanel({ model, displayCurrency, exchange, updateFinance }) {
     (s, a) => s + (a.currency === USD ? (+a.balance || 0) * rate : (+a.balance || 0)),
     0,
   );
+  // "Days of runway" on the daily-spending card(s): balance ÷ average daily spend
+  // this month. A supportive, behavioral nudge tying accounts to real pace.
+  const dailyBurn = (() => {
+    const spent = currentMonthExpenses(model).reduce((s, e) => s + Math.max(0, expenseAmountAMD(e, exchange)), 0);
+    const dom = new Date().getDate();
+    return dom > 0 ? spent / dom : 0;
+  })();
+  const dailyCardBalance = accounts
+    .filter((a) => a.role === "Daily spending")
+    .reduce((s, a) => s + (a.currency === USD ? (+a.balance || 0) * rate : (+a.balance || 0)), 0);
+  const runwayDays = dailyBurn > 0 && dailyCardBalance > 0 ? Math.floor(dailyCardBalance / dailyBurn) : null;
 
   const usdExposurePct = nw.heldCash > 0 ? Math.round(((model.holdings.usd * rate) / nw.heldCash) * 100) : 0;
   const sortedDebts = [...model.debts].sort((a, b) => (b.rate || 0) - (a.rate || 0));
@@ -2046,6 +2057,11 @@ function WealthPanel({ model, displayCurrency, exchange, updateFinance }) {
           ))}
           {!accounts.length && <div className="empty-inline">Add your bank cards/accounts so the app can map money to the right place.</div>}
         </div>
+        {runwayDays != null && (
+          <div className="accounts-runway">
+            ⚡ Daily-spending card: ~<b>{runwayDays} day{runwayDays === 1 ? "" : "s"}</b> left at your current pace ({displayMoney(Math.round(dailyBurn), displayCurrency, exchange)}/day).
+          </div>
+        )}
         <button className="goal-add-btn" onClick={addAccount}><Plus size={15} /> Add account</button>
       </Card>
 
