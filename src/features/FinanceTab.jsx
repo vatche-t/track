@@ -38,6 +38,7 @@ import {
   YAxis,
 } from "recharts";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
+import { Modal } from "../components/Modal";
 import { FinanceAnalyticsPanel } from "./AnalyticsTab";
 import {
   askFinanceAnalyticsQuestion,
@@ -55,6 +56,7 @@ import {
   AMD,
   MONEY_CURRENCIES,
   USD,
+  allocateWindfall,
   allocationSuggestion,
   amd,
   createExpense,
@@ -182,6 +184,7 @@ export function FinanceTab({ finance, setFinance }) {
   const [financeView, setFinanceView] = useState("plan");
   const [planMode, setPlanMode] = useState("overview");
   const [adviceOpen, setAdviceOpen] = useState(false);
+  const [moneyInOpen, setMoneyInOpen] = useState(false);
   const [rateBusy, setRateBusy] = useState(false);
   const [rateError, setRateError] = useState("");
   const [draft, setDraft] = useState({
@@ -542,6 +545,12 @@ export function FinanceTab({ finance, setFinance }) {
               </button>
             </div>
             <Button
+              onClick={() => setMoneyInOpen(true)}
+              title="Allocate incoming money across your goals and accounts"
+            >
+              <Plus size={15} /> Money in
+            </Button>
+            <Button
               variant="primary"
               onClick={() => setAdviceOpen(true)}
               title="Ask Kai about your finances"
@@ -576,6 +585,15 @@ export function FinanceTab({ finance, setFinance }) {
         exchange={exchange}
         spendingCap={spendingCap}
         fc={fc}
+      />
+
+      <MoneyInModal
+        open={moneyInOpen}
+        onClose={() => setMoneyInOpen(false)}
+        model={model}
+        updateFinance={updateFinance}
+        displayCurrency={displayCurrency}
+        exchange={exchange}
       />
 
       {financeView === "analytics" ? (
@@ -906,6 +924,83 @@ export function FinanceTab({ finance, setFinance }) {
         </>
       )}
     </div>
+  );
+}
+
+// "Money in → allocate": enter an incoming amount (salary surplus, bonus,
+// repayment), and it splits it foundation-first across goals AND tells you which
+// account to hold it in. Apply adds the amounts to each goal's saved total.
+const MONEY_IN_TYPES = ["Salary", "Bonus", "Repayment", "Refund", "Other"];
+function MoneyInModal({ open, onClose, model, updateFinance, displayCurrency, exchange }) {
+  const [amount, setAmount] = useState("");
+  const [type, setType] = useState("Bonus");
+  const amt = +String(amount).replace(/[^\d.]/g, "") || 0;
+  const { allocations, leftover } = allocateWindfall(amt, model.savings || []);
+
+  const accounts = model.accounts || [];
+  const savingsAcct = accounts.find((a) => a.role === "Savings") || accounts.find((a) => a.role === "Emergency") || accounts.find((a) => a.currency === AMD);
+  const dailyAcct = accounts.find((a) => a.role === "Daily spending");
+
+  const apply = () => {
+    updateFinance((p) => ({
+      ...p,
+      savings: (p.savings || []).map((s) => {
+        const a = allocations.find((x) => x.id === s.id);
+        return a ? { ...s, saved: Math.round((+s.saved || 0) + a.amount) } : s;
+      }),
+    }));
+    setAmount("");
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Money in — where should it go?">
+      <div className="moneyin">
+        <div className="moneyin-top">
+          <div className="moneyin-amt">
+            <label>Amount received</label>
+            <MoneyInput value={amount} onChange={setAmount} currency={AMD} placeholder="e.g. 5,000,000" />
+          </div>
+          <div className="moneyin-types">
+            {MONEY_IN_TYPES.map((tp) => (
+              <button key={tp} type="button" className={type === tp ? "active" : ""} onClick={() => setType(tp)}>{tp}</button>
+            ))}
+          </div>
+        </div>
+
+        {amt > 0 ? (
+          <>
+            <p className="moneyin-lead">Here's where your {displayMoney(amt, displayCurrency, exchange)} {type.toLowerCase()} should go — highest priority first:</p>
+            <div className="moneyin-list">
+              {allocations.map((a) => (
+                <div className="moneyin-row" key={a.id}>
+                  <span className="nm">{a.name}<small>hold in {savingsAcct ? savingsAcct.name : "your savings account"}</small></span>
+                  <b>{displayMoney(a.amount, displayCurrency, exchange)}</b>
+                </div>
+              ))}
+              {leftover > 0 && (
+                <div className="moneyin-row leftover">
+                  <span className="nm">Keep on hand<small>{dailyAcct ? dailyAcct.name : "your daily-spending card"}</small></span>
+                  <b>{displayMoney(leftover, displayCurrency, exchange)}</b>
+                </div>
+              )}
+              {!allocations.length && leftover === 0 && (
+                <div className="empty-inline">Enter an amount to see the plan.</div>
+              )}
+            </div>
+            <p className="moneyin-note">💡 Goal money is safest in a term deposit (~10% AMD) — not sitting on a card.</p>
+            <div className="moneyin-actions">
+              <Button variant="primary" onClick={apply} disabled={!allocations.length}>
+                <ArrowRight size={15} /> Apply to my goals
+              </Button>
+              <Button onClick={onClose}>Cancel</Button>
+            </div>
+          </>
+        ) : (
+          <p className="moneyin-lead">Enter the amount you received and I'll tell you exactly which goal to fund and which account to put it in.</p>
+        )}
+      </div>
+    </Modal>
   );
 }
 

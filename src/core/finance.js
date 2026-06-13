@@ -809,6 +809,23 @@ export const allocationSuggestion = (income, savings = []) => {
   ];
 };
 
+// Allocate an incoming lump sum (salary surplus, bonus, repayment) across goals
+// foundation-first: fill each goal to its remaining gap in priority order, then
+// whatever's left is "keep on hand". Pure + deterministic.
+export const allocateWindfall = (amount, savings = []) => {
+  let remaining = Math.max(0, +amount || 0);
+  const sorted = [...savings].sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+  const allocations = [];
+  for (const fund of sorted) {
+    const gap = Math.max(0, (+fund.target || 0) - (+fund.saved || 0));
+    if (gap <= 0 || remaining <= 0) continue;
+    const give = Math.min(remaining, gap);
+    remaining -= give;
+    allocations.push({ id: fund.id, name: fund.name, amount: Math.round(give) });
+  }
+  return { allocations, leftover: Math.round(remaining) };
+};
+
 // Deterministic, AI-free plain-English summary of the recommended split.
 // Built only from the allocation amounts so the coach always explains itself,
 // even when the AI service is unavailable.

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CURRENT_SCHEMA,
+  allocateWindfall,
   allocationSuggestion,
   ensureActiveMonth,
   ensureStarterExpenses,
@@ -199,6 +200,28 @@ describe("savings dedupe + explicit-zero preservation", () => {
       savings: [{ id: "x", name: "Apartment down payment", target: 13000000, monthly: 860000, saved: 0 }],
     });
     expect(out.savings.length).toBe(1);
+  });
+});
+
+describe("allocateWindfall", () => {
+  const funds = [
+    { id: "em", name: "Emergency", target: 1500000, saved: 0, priority: 1 },
+    { id: "mv", name: "Move-in", target: 600000, saved: 0, priority: 2 },
+    { id: "ap", name: "Apartment", target: 13000000, saved: 0, priority: 3 },
+  ];
+  it("fills goals foundation-first to their gaps", () => {
+    const r = allocateWindfall(5000000, funds);
+    expect(r.allocations).toEqual([
+      { id: "em", name: "Emergency", amount: 1500000 },
+      { id: "mv", name: "Move-in", amount: 600000 },
+      { id: "ap", name: "Apartment", amount: 2900000 },
+    ]);
+    expect(r.leftover).toBe(0);
+  });
+  it("returns leftover when goals are full", () => {
+    const r = allocateWindfall(3000000, [{ id: "em", name: "Emergency", target: 1500000, saved: 0, priority: 1 }]);
+    expect(r.allocations[0].amount).toBe(1500000);
+    expect(r.leftover).toBe(1500000);
   });
 });
 
