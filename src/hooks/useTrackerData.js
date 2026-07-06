@@ -19,6 +19,7 @@ export function useTrackerData() {
   const [habits, setHabits] = useState([]);
   const [finance, setFinance] = useState(DEFAULTS.finance);
   const [reviews, setReviews] = useState([]);
+  const [roadmap, setRoadmap] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +34,7 @@ export function useTrackerData() {
         savedHabits,
         savedFinance,
         savedReviews,
+        savedRoadmap,
       ] = await Promise.all([
         store.get("pt_tasks", DEFAULTS.tasks),
         store.get("pt_recurring", DEFAULTS.recurringTemplates),
@@ -42,6 +44,7 @@ export function useTrackerData() {
         store.get("pt_habits", DEFAULTS.habits),
         store.get("pt_finance", DEFAULTS.finance),
         store.get("pt_reviews", DEFAULTS.reviews),
+        store.get("pt_roadmap", DEFAULTS.roadmap),
       ]);
 
       if (cancelled) return;
@@ -66,6 +69,7 @@ export function useTrackerData() {
       setHabits(savedHabits);
       setFinance(ensureStarterExpenses(savedFinance));
       setReviews(savedReviews);
+      setRoadmap(savedRoadmap);
       setLoaded(true);
     })();
 
@@ -81,6 +85,7 @@ export function useTrackerData() {
   usePersistWhenLoaded(loaded, "pt_habits", habits);
   usePersistWhenLoaded(loaded, "pt_finance", finance);
   usePersistWhenLoaded(loaded, "pt_reviews", reviews);
+  usePersistWhenLoaded(loaded, "pt_roadmap", roadmap);
 
   const data = useMemo(
     () => ({
@@ -126,5 +131,7 @@ export function useTrackerData() {
     setFinance,
     reviews,
     setReviews,
+    roadmap,
+    setRoadmap,
   };
 }

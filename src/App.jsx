@@ -10,6 +10,7 @@ import {
   Flame,
   Home,
   LogOut,
+  Route,
   Sunrise,
   Target,
   TrendingUp,
@@ -24,6 +25,7 @@ import { ExportModal } from "./features/ExportModal";
 import { FinanceTab } from "./features/FinanceTab";
 import { FocusBar } from "./features/FocusBar";
 import { GoalsTab } from "./features/GoalsTab";
+import { RoadmapTab } from "./features/RoadmapTab";
 import { HabitsTab } from "./features/HabitsTab";
 import { RoutinesTab } from "./features/RoutinesTab";
 import { TasksTab } from "./features/TasksTab";
@@ -38,6 +40,7 @@ const TRACK_TABS = [
   ["tasks", "Tasks", CheckSquare],
   ["routines", "Routines", Sunrise],
   ["goals", "Goals", Target],
+  ["roadmap", "Roadmap", Route],
   ["habits", "Habits", Flame],
   ["review", "Weekly Review", ClipboardList],
   ["analytics", "Analytics", BarChart3],
@@ -65,6 +68,8 @@ export default function App() {
     setFinance,
     reviews,
     setReviews,
+    roadmap,
+    setRoadmap,
   } = useTrackerData();
   const { timer, setTimer, startFocus } = useFocusTimer();
   const data = useMemo(
@@ -219,6 +224,9 @@ export default function App() {
                 )}
                 {tab === "routines" && (
                   <RoutinesTab routines={routines} setRoutines={setRoutines} />
+                )}
+                {tab === "roadmap" && (
+                  <RoadmapTab roadmap={roadmap} setRoadmap={setRoadmap} />
                 )}
                 {tab === "goals" && (
                   <GoalsTab goals={goals} setGoals={setGoals} setTasks={setTasks} />
