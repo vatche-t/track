@@ -16,6 +16,7 @@
     "exceljs": "^3.4.0",
     "framer-motion": "^12.40.0",
     "lucide-react": "latest",
+    "pdfjs-dist": "^4.10.38",
     "react": "latest",
     "react-dom": "latest",
     "recharts": "latest",

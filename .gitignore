@@ -11,3 +11,7 @@ productivity_tracker.jsx
 prod.txt
 tracker-today-redesign.png
 .superpowers/
+
+# Bank statements (private financial data — never commit)
+*.pdf
+statement_*.pdf

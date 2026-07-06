@@ -21,6 +21,7 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Upload,
   Wallet,
   X,
 } from "lucide-react";
@@ -39,6 +40,7 @@ import {
 } from "recharts";
 import { Button, Card, Input, Pill, SectionTitle, Stat } from "../components/ui";
 import { Modal } from "../components/Modal";
+import { StatementImportModal } from "./StatementImportModal";
 import { FinanceAnalyticsPanel } from "./AnalyticsTab";
 import {
   askFinanceAnalyticsQuestion,
@@ -185,6 +187,7 @@ export function FinanceTab({ finance, setFinance }) {
   const [planMode, setPlanMode] = useState("overview");
   const [adviceOpen, setAdviceOpen] = useState(false);
   const [moneyInOpen, setMoneyInOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [rateBusy, setRateBusy] = useState(false);
   const [rateError, setRateError] = useState("");
   const [draft, setDraft] = useState({
@@ -551,6 +554,12 @@ export function FinanceTab({ finance, setFinance }) {
               <Plus size={15} /> Money in
             </Button>
             <Button
+              onClick={() => setImportOpen(true)}
+              title="Upload your bank statement PDFs to auto-create expenses and top-ups"
+            >
+              <Upload size={15} /> Import statement
+            </Button>
+            <Button
               variant="primary"
               onClick={() => setAdviceOpen(true)}
               title="Ask Kai about your finances"
@@ -585,6 +594,13 @@ export function FinanceTab({ finance, setFinance }) {
         exchange={exchange}
         spendingCap={spendingCap}
         fc={fc}
+      />
+
+      <StatementImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        model={model}
+        updateFinance={updateFinance}
       />
 
       <MoneyInModal

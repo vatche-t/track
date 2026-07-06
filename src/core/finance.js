@@ -384,6 +384,9 @@ const normalizeAccount = (a = {}) => ({
   currency: a.currency === USD ? USD : AMD,
   balance: Math.max(0, +a.balance || 0),
   role: a.role || "",
+  // Statement account/card number, so the import modal can auto-target the
+  // right account on future uploads (must survive normalization).
+  ...(a.statementAccount ? { statementAccount: a.statementAccount } : {}),
 });
 
 const normalizeHoldings = (holdings = {}) => ({

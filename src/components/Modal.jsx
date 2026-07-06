@@ -4,8 +4,8 @@ import { X } from "lucide-react";
 import { Card } from "./ui";
 
 // Reusable modal: fade + scale in, closes on backdrop click and Esc.
-// Props: open, onClose, title, children.
-export function Modal({ open, onClose, title, children }) {
+// Props: open, onClose, title, children, wide (roomier panel for review flows).
+export function Modal({ open, onClose, title, children, wide = false }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (event) => {
@@ -32,7 +32,7 @@ export function Modal({ open, onClose, title, children }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            style={{ width: "min(560px, 100%)" }}
+            style={{ width: wide ? "min(760px, 100%)" : "min(560px, 100%)" }}
           >
             <Card className="modal modal-panel">
               <div className="modal-head">
