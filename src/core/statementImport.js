@@ -54,12 +54,17 @@ const iso2 = (dmy) => {
 // Keep ASCII-ish merchant text: drop Armenian letters and boilerplate noise.
 const cleanMerchant = (s) =>
   String(s)
+    .replace(/\*\s*This document[\s\S]*$/i, " ")   // strip the statement footer
     .replace(/[Ա-Ֆա-ֆ]+/g, " ")            // Armenian letters
+    .replace(/[«»“”"]/g, " ")               // quote marks around Armenian company names
     .replace(/\bՔ\s*:\s*/g, " ")
     .replace(/[+-]?[\d,]+\.\d{2}\s*AMD/gi, " ") // amounts
     .replace(/\b\d{2}:\d{2}\b/g, " ")       // times
     .replace(/\b\d{2}\/\d{2}\/\d{2,4}\b/g, " ") // dates
     .replace(/\bAMD\b/g, " ")
+    .replace(/\bAM\s+\d+\b/g, " ")          // Ameria terminal/location codes ("AM 319273")
+    .replace(/\s\d{5,}\b/g, " ")            // trailing long reference numbers
+    .replace(/[,:;/\\]+/g, " ")             // stray punctuation left by removed tokens
     .replace(/\s+/g, " ")
     .trim();
 

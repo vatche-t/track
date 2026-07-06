@@ -146,11 +146,22 @@ export function StatementImportModal({ open, onClose, model, updateFinance }) {
       // 3. Wealth: set matched account balances to statement closing balances.
       //    Use the LAST matching balance so two statements mapped to one account
       //    don't silently drop the later (correct) closing balance.
-      next.accounts = (p.accounts || []).map((a) => {
+      const mapped = (p.accounts || []).map((a) => {
         const hits = (result.balances || []).filter((b, i) => balTarget[i] === a.id);
         const hit = hits[hits.length - 1];
         return hit ? { ...a, balance: Math.round(hit.closingBalance), statementAccount: hit.account } : a;
       });
+      // Statements the user chose to add as a brand-new account.
+      const addedAccounts = (result.balances || [])
+        .filter((b, i) => balTarget[i] === "__new__")
+        .map((b) => ({
+          id: `acct-${b.bank}-${String(b.account).slice(-4)}`,
+          name: `${bankLabel(b.bank)} ·${String(b.account).slice(-4)}`,
+          bank: bankLabel(b.bank), currency: "AMD",
+          balance: Math.round(b.closingBalance || 0), role: "",
+          statementAccount: b.account,
+        }));
+      next.accounts = [...mapped, ...addedAccounts];
       return next;
     });
     close();
@@ -228,6 +239,7 @@ export function StatementImportModal({ open, onClose, model, updateFinance }) {
                     <select value={balTarget[i] || ""} onChange={(e) => setBalTarget((s) => ({ ...s, [i]: e.target.value }))}>
                       <option value="">— don't update —</option>
                       {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      <option value="__new__">＋ Add as new account</option>
                     </select>
                   </div>
                 ))}
